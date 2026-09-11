@@ -1,7 +1,15 @@
 name: gmResourceModifier
 display-name: Gm Resource Modifier
-version: 0.2.0
+version: 0.2.1
 author: TheRedDaemon
 meta:
   version: 1.0.0
 type: module
+tags:
+- textures
+- tools
+capabilities:
+  files: false
+  code: true
+  configuration: false
+  options: false
