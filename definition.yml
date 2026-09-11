@@ -8,8 +8,3 @@ type: module
 tags:
 - textures
 - tools
-capabilities:
-  files: false
-  code: true
-  configuration: false
-  options: false
