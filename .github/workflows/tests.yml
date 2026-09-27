@@ -1,0 +1,12 @@
+name: Native resource lifecycle
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  resource-owner:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests -B build-tests -A Win32
+      - run: cmake --build build-tests --config Release
+      - run: ctest --test-dir build-tests -C Release --output-on-failure

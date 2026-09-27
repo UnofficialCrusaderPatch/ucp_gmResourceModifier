@@ -1,5 +1,8 @@
 #include "pch.h"
 #include "gmResourceModifierInternal.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdio>
 #include <cstring>

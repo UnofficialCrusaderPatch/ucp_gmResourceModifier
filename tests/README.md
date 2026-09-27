@@ -1,6 +1,6 @@
 The inherited-sheet change is under development for issue
 https://github.com/UnofficialCrusaderPatch/ucp_gmResourceModifier/issues/6.
-No release or live rendering acceptance is claimed yet.
+No release or rendered custom-projectile acceptance is claimed yet.
 
 Owner review: base 019039a. `ColorAdapter::detouredLoadGmFiles` owns the one native
 load call, replacer initialization and queued replacements. `SetGm` owns original
@@ -33,15 +33,26 @@ Local verification, 12 September 2026:
   The official fixtures' native sections equal the reference family; their file
   hashes differ. These are fixture/binding checks, not live language acceptance.
 
-Still required: actual owner/consumer initialization and rendering on both game
-families; failure admission through the real framework; multiplayer/save/replay
+Live owner initialization also passed on normal Crusader (PID25172) and Extreme
+(PID36156), using framework 3.0.7 developer build 77c6acc, owner source cf8c2b7 and
+the real DLL. `native-init.lua` loaded native missile/cow/brazier/rock-chip sheets
+(types 2, 6 and 1), reserved five slots and verified IDs 207..211, pre-init pins,
+shared active references, queued texture replacement, inherited resets and final
+free through public APIs. The expected refused-free/queued-SetGm warnings were
+the only warnings; no ERROR/FATAL occurred. Both games remained responsive and
+closed normally; desktop released at 20:45:55 CEST. No game/save was loaded or
+written. The test installation's original module/config were restored exactly.
+
+Still required: real custom-projectile rendering and consumer initialization with
+configured variants on both families; failure admission through the real framework; multiplayer/save/replay
 layout identity; malformed resource validation/content identity in this owner;
 runtime diagnostic locale handling; supported-variant matrix review; CI/review
 and normal merge. Passing host tests does not close these gates.
 
-Build the test as a Win32 console executable using the regular MSVC environment:
-compile `tests/reservations.cpp` and the production `gmResourceModifier.cpp` with
-C++17, `tests/stubs` first in the include path, the production include directory
-and Lua 5.4.6 includes; link `lua_static.lib`. Run each of the six scenario names
-above in a scratch directory. The stub include directory is never used in the
-production DLL build.
+Build/run the host suite with `cmake -S tests -B build-tests -A Win32`,
+`cmake --build build-tests --config Release` and
+`ctest --test-dir build-tests -C Release --output-on-failure`. It uses the same
+pinned Lua-source test-host pattern as Recorder's compatibility checks. Release
+assertions remain enabled in the test. The stub include directory is never used
+in the production DLL build. Native fixture checks stay local; CI downloads no
+game executables or artwork.
