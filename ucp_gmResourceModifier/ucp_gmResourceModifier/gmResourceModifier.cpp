@@ -11,6 +11,8 @@
 #include <sstream>
 #include <cstdint>
 #include <stdexcept>
+#include <array>
+#include <wincrypt.h>
 
 
 // static variables:
@@ -244,7 +246,81 @@ void Gm1ResourceManager::LogHelper(const LogLevel level, const char* start, cons
   Log(level, stream.str().c_str());
 }
 
-int Gm1ResourceManager::CreateGm1Resource(const char* filename)
+// This is the owner's strict admission path for complete inherited artwork.
+// Ordinary LoadGm1Resource keeps its established partial/replacement semantics.
+static bool ValidateCompleteSheet(const Gm1Header& header,
+  const std::vector<int>& offsets, const std::vector<int>& sizes,
+  const std::vector<ImageHeader>& images, const std::vector<unsigned char>& data)
+{
+  if (header.dataSize > 16777216u) return false;
+  const int pixelSize = header.gm1Type == Gm1Type::ANIMATIONS ? 1 : 2;
+  for (size_t i = 0; i < images.size(); ++i)
+  {
+    const auto& image = images[i];
+    if (!image.width || !image.height || image.width > 2048 || image.height > 2048 ||
+        !sizes[i] || image.relativeDataPos || image.tileOffset || image.direction ||
+        image.horizontalOffsetOfImage || image.buildingWidth || image.animatedColor)
+      return false;
+    size_t position = static_cast<size_t>(offsets[i]);
+    const size_t end = position + static_cast<size_t>(sizes[i]);
+    unsigned x = 0, y = 0;
+    while (position < end)
+    {
+      const unsigned token = data[position++];
+      const unsigned flag = token / 32, run = token % 32 + 1;
+      if (flag == 4)
+      {
+        if (y >= image.height && !(token == 128 && end - position <= 2)) return false;
+        ++y; x = 0;
+        if (y > static_cast<unsigned>(image.height) + 3u) return false;
+      }
+      else
+      {
+        if (flag > 2 || y >= image.height || x + run > image.width) return false;
+        x += run;
+        if (flag == 0) position += run * pixelSize;
+        else if (flag == 2) position += pixelSize;
+        if (position > end) return false;
+      }
+    }
+    if (y < image.height && !(y == image.height - 1 && x == image.width)) return false;
+  }
+  return true;
+}
+
+static bool HashCompleteSheet(const Gm1Header& header,
+  const std::vector<int>& offsets, const std::vector<int>& sizes,
+  const std::vector<ImageHeader>& images, const std::vector<unsigned char>& data,
+  std::string& result)
+{
+  HCRYPTPROV provider = 0;
+  HCRYPTHASH hash = 0;
+  if (!CryptAcquireContext(&provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) return false;
+  bool ok = CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash) != 0;
+  auto feed = [&](const void* bytes, size_t length) {
+    if (ok && length) ok = CryptHashData(hash, static_cast<const BYTE*>(bytes),
+                                        static_cast<DWORD>(length), 0) != 0;
+  };
+  feed(&header, sizeof(header));
+  feed(offsets.data(), offsets.size() * sizeof(int));
+  feed(sizes.data(), sizes.size() * sizeof(int));
+  feed(images.data(), images.size() * sizeof(ImageHeader));
+  feed(data.data(), data.size());
+  std::array<BYTE, 32> digest{};
+  DWORD digestLength = static_cast<DWORD>(digest.size());
+  if (ok) ok = CryptGetHashParam(hash, HP_HASHVAL, digest.data(), &digestLength, 0) != 0 &&
+               digestLength == digest.size();
+  if (hash) CryptDestroyHash(hash);
+  CryptReleaseContext(provider, 0);
+  if (!ok) return false;
+  static constexpr char hex[] = "0123456789abcdef";
+  result.clear(); result.reserve(64);
+  for (BYTE byte : digest) { result.push_back(hex[byte >> 4]); result.push_back(hex[byte & 15]); }
+  return true;
+}
+
+int Gm1ResourceManager::CreateGm1Resource(const char* filename,
+  int expectedCount, int expectedType, std::string* sha256)
 {
   
   int newId{ GetId() };
@@ -284,7 +360,11 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
     const uint64_t required = sizeof(Gm1Header) +
       static_cast<uint64_t>(count) * (2 * sizeof(int) + sizeof(ImageHeader)) +
       gm1HeaderTemp->dataSize;
-    if (!count || count > 66000 || required > static_cast<uint64_t>(fileLength))
+    if (!count || count > 66000 || required > static_cast<uint64_t>(fileLength) ||
+        (sha256 && (expectedCount <= 0 || expectedType <= 0 ||
+                    count != static_cast<size_t>(expectedCount) ||
+                    static_cast<int>(gm1HeaderTemp->gm1Type) != expectedType ||
+                    required != static_cast<uint64_t>(fileLength))))
       throw std::runtime_error("invalid GM1 count or payload length");
     const int numberOfPictures{ static_cast<int>(count) };
 
@@ -306,6 +386,12 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
 
     imageDataTemp.resize(gm1HeaderTemp->dataSize);
     ifs.read((char*) imageDataTemp.data(), gm1HeaderTemp->dataSize);
+
+    if (sha256 && (!ValidateCompleteSheet(*gm1HeaderTemp, imageOffsetTemp,
+                                          imageSizesTemp, imageHeaderTemp, imageDataTemp) ||
+                   !HashCompleteSheet(*gm1HeaderTemp, imageOffsetTemp,
+                                      imageSizesTemp, imageHeaderTemp, imageDataTemp, *sha256)))
+      throw std::runtime_error("invalid complete GM1 animation or content digest");
 
     ifs.close();  // closing manually to trigger error here and not later
   }
@@ -765,4 +851,21 @@ extern "C" __declspec(dllexport) int __cdecl lua_FreeGm1Resource(lua_State * L)
   bool res{ FreeGm1Resource(lua_tointeger(L, 1)) };
   lua_pushboolean(L, res);
   return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl lua_LoadCompleteGm1Resource(lua_State* L)
+{
+  if (lua_gettop(L) != 3 || lua_type(L, 1) != LUA_TSTRING ||
+      !lua_isinteger(L, 2) || !lua_isinteger(L, 3))
+    return luaL_error(L, "[gmResourceModifier]: LoadCompleteGm1Resource expects path, image count and GM1 type");
+  const lua_Integer count = lua_tointeger(L, 2), type = lua_tointeger(L, 3);
+  if (count < 1 || count > 66000 || type < 1 || type > 7)
+    return luaL_error(L, "[gmResourceModifier]: invalid complete GM1 layout");
+  std::string digest;
+  const int id = Gm1ResourceManager::CreateGm1Resource(lua_tostring(L, 1),
+    static_cast<int>(count), static_cast<int>(type), &digest);
+  lua_pushinteger(L, id);
+  if (id >= 0) lua_pushlstring(L, digest.data(), digest.size());
+  else lua_pushnil(L);
+  return 2;
 }

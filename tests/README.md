@@ -45,7 +45,7 @@ written. The test installation's original module/config were restored exactly.
 
 Still required: real custom-projectile rendering and consumer initialization with
 configured variants on both families; failure admission through the real framework; multiplayer/save/replay
-layout identity; malformed resource validation/content identity in this owner;
+layout identity;
 runtime diagnostic locale handling; supported-variant matrix review; CI/review
 and normal merge. Passing host tests does not close these gates.
 
@@ -55,8 +55,12 @@ reject oversized/truncated metadata and out-of-bounds images in every admission
 scenario. With `GM1_FIXTURE_DIR` pointing at a local game `gm` directory, the same
 test also loads and frees the six unmodified projectile/decorative sheets; this
 passed locally. The production Win32 DLL builds with MSVC v143, and the binding
-suite still passes on the available normal/Extreme executable fixtures. Complete
-animation-stream validation and atomic content identity remain outstanding.
+suite still passes on the available normal/Extreme executable fixtures. The new
+complete-sheet API additionally checks exact length, inherited type/count,
+self-contained frame metadata and bounded animation tokens; it returns a SHA-256
+digest computed from the bytes read for this resource. Host tests compare the
+digest with an independent expected fixture value. Live consumer acceptance is
+still outstanding.
 
 Build/run the host suite with `cmake -S tests -B build-tests -A Win32`,
 `cmake --build build-tests --config Release` and

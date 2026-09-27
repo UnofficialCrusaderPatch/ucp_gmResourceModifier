@@ -52,6 +52,8 @@ extern "C" __declspec(dllexport) int __cdecl luaopen_gmResourceModifier(lua_Stat
   lua_setfield(L, -2, "lua_SetGm");
   lua_pushcfunction(L, lua_LoadGm1Resource);
   lua_setfield(L, -2, "lua_LoadGm1Resource");
+  lua_pushcfunction(L, lua_LoadCompleteGm1Resource);
+  lua_setfield(L, -2, "lua_LoadCompleteGm1Resource");
   lua_pushcfunction(L, lua_FreeGm1Resource);
   lua_setfield(L, -2, "lua_FreeGm1Resource");
   lua_pushcfunction(L, lua_ReserveGm);

@@ -22,7 +22,7 @@ set(owner "${CMAKE_CURRENT_SOURCE_DIR}/../ucp_gmResourceModifier/ucp_gmResourceM
 add_executable(reservation_check reservations.cpp "${owner}/gmResourceModifier.cpp")
 target_compile_features(reservation_check PRIVATE cxx_std_17)
 target_include_directories(reservation_check PRIVATE stubs "${owner}" "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(reservation_check PRIVATE test_lua)
+target_link_libraries(reservation_check PRIVATE test_lua advapi32)
 foreach(scenario success mismatch slot-capacity image-capacity occupied bad-offset)
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${scenario}")
   add_test(NAME ${scenario} COMMAND reservation_check ${scenario})

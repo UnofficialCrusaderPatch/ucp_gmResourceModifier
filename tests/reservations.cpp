@@ -64,15 +64,30 @@ int main(int argc,char** argv)
   ColorAdapter::actualLoadGmsFunc=static_cast<ColorAdapter::ActualLoadGmsFunc>(&RendererFixture::load);
   int a=resource("a.gm1",2,31),b=resource("b.gm1",3,62),texture=resource("texture.gm1",2,93);
   assert(a>=0 && b>=0 && texture>=0);
+  std::string digest;
+  int complete=Gm1ResourceManager::CreateGm1Resource("a.gm1",2,2,&digest);
+  assert(complete>=0 && digest=="5f54edaecc57a4819b59edacf44783f24825b5b196243a94e59cfe755dda8a67"
+         && FreeGm1Resource(complete));
+  assert(Gm1ResourceManager::CreateGm1Resource("a.gm1",3,2,&digest)==-1);
+  lua_State* lua=luaL_newstate();
+  lua_pushcfunction(lua,lua_LoadCompleteGm1Resource);
+  lua_pushstring(lua,"a.gm1"); lua_pushinteger(lua,2); lua_pushinteger(lua,2);
+  assert(lua_pcall(lua,3,2,0)==LUA_OK);
+  const int fromLua=static_cast<int>(lua_tointeger(lua,-2));
+  assert(fromLua>=0 && std::strcmp(lua_tostring(lua,-1),digest.c_str())==0);
+  lua_close(lua);
+  assert(FreeGm1Resource(fromLua));
   // Optional local game-artwork check; CI does not download proprietary files.
   if (const char* fixtureDir=std::getenv("GM1_FIXTURE_DIR"))
   {
-    for (const char* name : { "body_missile", "body_missile_2", "body_missile_cow",
-                              "body_missile_fire", "body_brazier", "rock_chips" })
+    struct Sheet { const char* name; int count; int type; };
+    for (const Sheet sheet : { Sheet{"body_missile",184,2}, {"body_missile_2",144,2},
+                               {"body_missile_cow",29,2}, {"body_missile_fire",144,2},
+                               {"body_brazier",8,6}, {"rock_chips",32,1} })
     {
-      const std::string path=std::string(fixtureDir)+"/"+name+".gm1";
-      const int id=LoadGm1Resource(path.c_str());
-      assert(id>=0 && FreeGm1Resource(id));
+      const std::string path=std::string(fixtureDir)+"/"+sheet.name+".gm1";
+      const int id=Gm1ResourceManager::CreateGm1Resource(path.c_str(),sheet.count,sheet.type,&digest);
+      assert(id>=0 && digest.size()==64 && FreeGm1Resource(id));
     }
   }
   std::ifstream input("a.gm1",std::ios::binary);
@@ -109,6 +124,19 @@ int main(int argc,char** argv)
     int offset=999;
     std::memcpy(bytes.data()+sizeof(Gm1Header),&offset,sizeof(offset));
     rejectFile("bad-image-offset.gm1",bytes);
+  }
+  {
+    auto bytes=good;
+    bytes[sizeof(Gm1Header)+2*24]=static_cast<char>(0xff);
+    std::ofstream out("bad-token.gm1",std::ios::binary);
+    out.write(bytes.data(),bytes.size()); out.close();
+    assert(Gm1ResourceManager::CreateGm1Resource("bad-token.gm1",2,2,&digest)==-1);
+  }
+  {
+    auto bytes=good; bytes.push_back('x');
+    std::ofstream out("trailing.gm1",std::ios::binary);
+    out.write(bytes.data(),bytes.size()); out.close();
+    assert(Gm1ResourceManager::CreateGm1Resource("trailing.gm1",2,2,&digest)==-1);
   }
   assert(ReserveGm(-1,a)==-1 && ReserveGm(240,a)==-1 && ReserveGm(1,999)==-1);
   int tokenA=ReserveGm(1,a),tokenB=ReserveGm(2,b),tokenC=ReserveGm(1,a);
