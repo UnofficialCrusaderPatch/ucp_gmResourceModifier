@@ -4,9 +4,12 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
+#include <string>
 #include <vector>
 
 extern "C" void ucp_log(ucp_NamedVerbosity, const char* message) { std::puts(message); }
@@ -61,6 +64,52 @@ int main(int argc,char** argv)
   ColorAdapter::actualLoadGmsFunc=static_cast<ColorAdapter::ActualLoadGmsFunc>(&RendererFixture::load);
   int a=resource("a.gm1",2,31),b=resource("b.gm1",3,62),texture=resource("texture.gm1",2,93);
   assert(a>=0 && b>=0 && texture>=0);
+  // Optional local game-artwork check; CI does not download proprietary files.
+  if (const char* fixtureDir=std::getenv("GM1_FIXTURE_DIR"))
+  {
+    for (const char* name : { "body_missile", "body_missile_2", "body_missile_cow",
+                              "body_missile_fire", "body_brazier", "rock_chips" })
+    {
+      const std::string path=std::string(fixtureDir)+"/"+name+".gm1";
+      const int id=LoadGm1Resource(path.c_str());
+      assert(id>=0 && FreeGm1Resource(id));
+    }
+  }
+  std::ifstream input("a.gm1",std::ios::binary);
+  const std::vector<char> good{ std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
+  auto rejectFile=[&](const char* path,const std::vector<char>& bytes) {
+    std::ofstream output(path,std::ios::binary);
+    output.write(bytes.data(),bytes.size());
+    output.close();
+    assert(LoadGm1Resource(path)==-1);
+  };
+  {
+    auto bytes=good;
+    Gm1Header header{};
+    std::memcpy(&header,bytes.data(),sizeof(header));
+    header.numberOfPicturesInFile=0xffffffffu;
+    std::memcpy(bytes.data(),&header,sizeof(header));
+    rejectFile("bad-count.gm1",bytes);
+  }
+  {
+    auto bytes=good;
+    Gm1Header header{};
+    std::memcpy(&header,bytes.data(),sizeof(header));
+    header.dataSize=0xffffffffu;
+    std::memcpy(bytes.data(),&header,sizeof(header));
+    rejectFile("bad-size.gm1",bytes);
+  }
+  {
+    auto bytes=good;
+    bytes.pop_back();
+    rejectFile("truncated.gm1",bytes);
+  }
+  {
+    auto bytes=good;
+    int offset=999;
+    std::memcpy(bytes.data()+sizeof(Gm1Header),&offset,sizeof(offset));
+    rejectFile("bad-image-offset.gm1",bytes);
+  }
   assert(ReserveGm(-1,a)==-1 && ReserveGm(240,a)==-1 && ReserveGm(1,999)==-1);
   int tokenA=ReserveGm(1,a),tokenB=ReserveGm(2,b),tokenC=ReserveGm(1,a);
   assert(tokenA==0 && tokenB==1 && tokenC==2);

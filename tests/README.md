@@ -49,6 +49,15 @@ layout identity; malformed resource validation/content identity in this owner;
 runtime diagnostic locale handling; supported-variant matrix review; CI/review
 and normal merge. Passing host tests does not close these gates.
 
+The loader now checks GM1 file length, image-table count, payload length and
+individual image bounds before allocating from file-controlled sizes. Host tests
+reject oversized/truncated metadata and out-of-bounds images in every admission
+scenario. With `GM1_FIXTURE_DIR` pointing at a local game `gm` directory, the same
+test also loads and frees the six unmodified projectile/decorative sheets; this
+passed locally. The production Win32 DLL builds with MSVC v143, and the binding
+suite still passes on the available normal/Extreme executable fixtures. Complete
+animation-stream validation and atomic content identity remain outstanding.
+
 Build/run the host suite with `cmake -S tests -B build-tests -A Win32`,
 `cmake --build build-tests --config Release` and
 `ctest --test-dir build-tests -C Release --output-on-failure`. It uses the same

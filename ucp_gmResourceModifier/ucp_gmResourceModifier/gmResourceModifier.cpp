@@ -9,6 +9,8 @@
 #include <ios>
 #include <fstream>
 #include <sstream>
+#include <cstdint>
+#include <stdexcept>
 
 
 // static variables:
@@ -267,10 +269,24 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
   {
     ifs.open(filename, std::ios::binary);
 
+    ifs.seekg(0, std::ios::end);
+    const auto fileLength = ifs.tellg();
+    ifs.seekg(0, std::ios::beg);
+    if (fileLength < static_cast<std::streamoff>(sizeof(Gm1Header)))
+      throw std::runtime_error("truncated GM1 header");
+
     gm1HeaderTemp = std::make_unique<Gm1Header>();
     ifs.read((char*) gm1HeaderTemp.get(), sizeof(Gm1Header));
 
-    int numberOfPictures{ static_cast<int>(gm1HeaderTemp->numberOfPicturesInFile) };
+    const size_t count = gm1HeaderTemp->numberOfPicturesInFile;
+    // The game's image table has 66,000 entries. Check the file before any
+    // count- or dataSize-controlled allocation, including wrapped counts.
+    const uint64_t required = sizeof(Gm1Header) +
+      static_cast<uint64_t>(count) * (2 * sizeof(int) + sizeof(ImageHeader)) +
+      gm1HeaderTemp->dataSize;
+    if (!count || count > 66000 || required > static_cast<uint64_t>(fileLength))
+      throw std::runtime_error("invalid GM1 count or payload length");
+    const int numberOfPictures{ static_cast<int>(count) };
 
     imageOffsetTemp.resize(numberOfPictures);
     ifs.read((char*) imageOffsetTemp.data(), numberOfPictures * sizeof(int));
@@ -281,16 +297,21 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
     imageHeaderTemp.resize(numberOfPictures);
     ifs.read((char*) imageHeaderTemp.data(), numberOfPictures * sizeof(ImageHeader));
 
+    for (int i = 0; i < numberOfPictures; ++i)
+    {
+      if (imageOffsetTemp[i] < 0 || imageSizesTemp[i] < 0 ||
+          static_cast<uint64_t>(imageOffsetTemp[i]) + imageSizesTemp[i] > gm1HeaderTemp->dataSize)
+        throw std::runtime_error("GM1 image data lies outside its payload");
+    }
+
     imageDataTemp.resize(gm1HeaderTemp->dataSize);
     ifs.read((char*) imageDataTemp.data(), gm1HeaderTemp->dataSize);
 
     ifs.close();  // closing manually to trigger error here and not later
   }
-  catch (std::ios_base::failure& e)
+  catch (const std::exception& e)
   {
-    char errMsg[100];
-    strerror_s(errMsg, 100, errno);
-    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, errMsg);
+    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, e.what());
     ReturnId(newId);
     return -1;
   }
