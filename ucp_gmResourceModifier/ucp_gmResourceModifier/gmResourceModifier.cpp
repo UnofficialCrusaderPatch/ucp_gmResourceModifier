@@ -859,7 +859,9 @@ extern "C" __declspec(dllexport) int __cdecl lua_LoadCompleteGm1Resource(lua_Sta
       !lua_isinteger(L, 2) || !lua_isinteger(L, 3))
     return luaL_error(L, "[gmResourceModifier]: LoadCompleteGm1Resource expects path, image count and GM1 type");
   const lua_Integer count = lua_tointeger(L, 2), type = lua_tointeger(L, 3);
-  if (count < 1 || count > 66000 || type < 1 || type > 7)
+  // The complete-sheet decoder is defined for these native projectile and
+  // decoration encodings. Other GM1 families retain the ordinary loader.
+  if (count < 1 || count > 66000 || (type != 1 && type != 2 && type != 6))
     return luaL_error(L, "[gmResourceModifier]: invalid complete GM1 layout");
   std::string digest;
   const int id = Gm1ResourceManager::CreateGm1Resource(lua_tostring(L, 1),

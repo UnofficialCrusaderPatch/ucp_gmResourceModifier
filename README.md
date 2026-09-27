@@ -101,7 +101,7 @@ See [the acceptance record](tests/README.md) for current verification limits.
 Version 0.3.1 adds `LoadCompleteGm1Resource(path, imageCount, gm1Type)` to the Lua
 module. It returns the resource ID and a lowercase SHA-256 digest of the exact
 loaded bytes, or `-1, nil` on failure. It accepts only a complete, self-contained
-sheet with the requested layout and validates image bounds and token streams
+sheet of GM1 type 1, 2 or 6 with the requested layout and validates image bounds and token streams
 before preparing native resources. The file is read once by this owner; consumers
 can use the digest in save/config identity and pass the returned ID to `ReserveGm`.
 The existing `LoadGm1Resource` remains available for partial texture replacement.

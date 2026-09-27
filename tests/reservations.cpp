@@ -75,6 +75,10 @@ int main(int argc,char** argv)
   assert(lua_pcall(lua,3,2,0)==LUA_OK);
   const int fromLua=static_cast<int>(lua_tointeger(lua,-2));
   assert(fromLua>=0 && std::strcmp(lua_tostring(lua,-1),digest.c_str())==0);
+  lua_settop(lua,0);
+  lua_pushcfunction(lua,lua_LoadCompleteGm1Resource);
+  lua_pushstring(lua,"a.gm1"); lua_pushinteger(lua,2); lua_pushinteger(lua,5);
+  assert(lua_pcall(lua,3,2,0)!=LUA_OK);
   lua_close(lua);
   assert(FreeGm1Resource(fromLua));
   // Optional local game-artwork check; CI does not download proprietary files.
