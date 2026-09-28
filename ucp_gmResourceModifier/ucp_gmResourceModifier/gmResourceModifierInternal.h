@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 #include "gmResourceModifierHeader.h"
@@ -65,6 +66,9 @@ struct ImageHeader
   unsigned char animatedColor; // if alpha 1
 };
 
+static_assert(sizeof(Gm1Header) == 5208, "GM1/native header requires the Win32 layout");
+static_assert(sizeof(ImageHeader) == 16, "Native image header layout changed");
+
 
 struct Gm1Resource
 {
@@ -91,7 +95,8 @@ private:
 
 public:
 
-  static int CreateGm1Resource(const char* filename);
+  static int CreateGm1Resource(const char* filename, int expectedCount = 0,
+                               int expectedType = 0, std::string* sha256 = nullptr);
   static int CreateGm1ResourceFromImage(const char* filepath);
   static bool FreeGm1Resource(int resourceId);
 
@@ -176,6 +181,8 @@ struct ColorAdapter
 inline ImageHeader* shcImageHeaderStart{};
 inline int* shcSizesStart{};
 inline int* shcOffsetStart{};
+inline int* shcFirstImageStart{};
+inline int* shcGmCount{};
 
 inline bool initDone{ false };
 
@@ -184,13 +191,18 @@ inline bool initDone{ false };
 extern "C" __declspec(dllexport) int __stdcall LoadGm1Resource(const char* filepath);
 extern "C" __declspec(dllexport) bool __stdcall SetGm(int gmID, int imageInGm, int resourceId, int imageInResource);
 extern "C" __declspec(dllexport) bool __stdcall FreeGm1Resource(int resourceId);
+extern "C" __declspec(dllexport) int __stdcall ReserveGm(int baseGm, int resourceId);
+extern "C" __declspec(dllexport) int __stdcall GetReservedGm(int reservation);
 
 extern "C" __declspec(dllexport) int __stdcall LoadResourceFromImage(const char* filepath);
 
 /* LUA */
 
 extern "C" __declspec(dllexport) int __cdecl lua_LoadGm1Resource(lua_State * L);
+extern "C" __declspec(dllexport) int __cdecl lua_LoadCompleteGm1Resource(lua_State * L);
 extern "C" __declspec(dllexport) int __cdecl lua_SetGm(lua_State * L);
 extern "C" __declspec(dllexport) int __cdecl lua_FreeGm1Resource(lua_State * L);
+extern "C" __declspec(dllexport) int __cdecl lua_ReserveGm(lua_State * L);
+extern "C" __declspec(dllexport) int __cdecl lua_GetReservedGm(lua_State * L);
 
 extern "C" __declspec(dllexport) int __cdecl lua_LoadResourceFromImage(lua_State * L);

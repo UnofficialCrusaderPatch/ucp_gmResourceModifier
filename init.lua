@@ -1,7 +1,7 @@
 local exports = {}
 
 local function getAddress(aob, errorMsg, modifierFunc)
-  local address = core.AOBScan(aob, 0x400000)
+  local address = core.AOBScan(aob)
   if address == nil then
     log(ERROR, errorMsg)
     error("'gmResourceModifier' can not be initialized.")
@@ -24,9 +24,16 @@ exports.enable = function(self, moduleConfig, globalConfig)
   )
   
   local actualLoadGmsAddress = getAddress(
-    "53 55 8b 6c 24 0c 56 57 8b d9",
+    "53 55 8B 6C 24 0C 56 57 8B D9 33 C0 8D 64 24 00 83 C0 01 BF ? ? ? ? 8B F5 B9 05 00 00 00 33 D2 F3 A6 74 10 81 C5 E8 03 00 00 3D F0 00 00 00 7C DE 83 C0 01 A3 ? ? ? ? B8 01 00 00 00 33 ED 89 43 48 89 43 4C 89 6B 44 8D 9B 00 00 00 00 8B 44 24 14 83 C5 01 BF ? ? ? ? 8B F0 B9 05 00 00 00 33 D2 F3 A6 74 44 8B 4B 4C 8B 53 48 89 14 8D ? ? ? ? 50 8B 43 4C 50 8B CB E8 ? ? ? ? 8B 43 4C 81 44 24 14 E8 03 00 00 8B C8 69 C9 58 14 00 00 8B 94 19 28 05 00 00 01 53 48",
     "'gmResourceModifier' was unable to find the actual gms loading address."
   )
+
+  -- Decode only inside the verified native loader context, before patching its
+  -- existing call site. Another owner's replacement must not be overwritten.
+  assert(placeToReplaceLoadGmsAddr + 5 + core.readInteger(placeToReplaceLoadGmsAddr + 1) == actualLoadGmsAddress,
+    "'gmResourceModifier' GM loading call is already replaced or incompatible.")
+  local gmFirstImageAddr = core.readInteger(actualLoadGmsAddress + 0x72)
+  local gmCountAddr = core.readInteger(actualLoadGmsAddress + 0x36)
   
   local transformRGB555ToRGB565 = getAddress(
     "55 8b ec 83 ec 0c 8b 45 08",
@@ -64,9 +71,12 @@ exports.enable = function(self, moduleConfig, globalConfig)
   
   -- no wrapping needed?
   self.LoadGm1Resource = function(self, ...) return requireTable.lua_LoadGm1Resource(...) end
+  self.LoadCompleteGm1Resource = function(self, ...) return requireTable.lua_LoadCompleteGm1Resource(...) end
   self.FreeGm1Resource = function(self, ...) return requireTable.lua_FreeGm1Resource(...) end
   self.SetGm = function(self, ...) return requireTable.lua_SetGm(...) end
   self.LoadResourceFromImage = function(self, ...) return requireTable.lua_LoadResourceFromImage(...) end
+  self.ReserveGm = function(self, ...) return requireTable.lua_ReserveGm(...) end
+  self.GetReservedGm = function(self, ...) return requireTable.lua_GetReservedGm(...) end
   
 
   --[[ modify code ]]--
@@ -106,6 +116,9 @@ exports.enable = function(self, moduleConfig, globalConfig)
     requireTable.address_ShcOffsetStart,
     {gmOffsetAddr}
   )
+
+  core.writeCode(requireTable.address_ShcFirstImageStart, {gmFirstImageAddr})
+  core.writeCode(requireTable.address_ShcGmCount, {gmCountAddr})
   
   -- give address to pixel format
   core.writeCode(

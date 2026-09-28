@@ -1,0 +1,25 @@
+{
+  "owner_source": "cf8c2b7",
+  "framework": "3.0.7 developer 77c6acc",
+  "module_zip_sha256": "83786141a27db69fc0c822f6c7b2fccf4c329b32449060ea64291415bf37e1b9",
+  "consumer_zip_sha256": "0a48d6fd7d0d742be138062039e9fd89b19066ffa15a5d85b22f30d9ee4ef069",
+  "probe_zip_sha256": "672685dd7afe9d1a0c906cf3c8aee5b3de22d9cd893b72001fd7bdb6549487ce",
+  "scope": "Public resource-owner APIs at native startup; no configured-variant rendering, game save, MP or replay acceptance",
+  "runs": [
+    {
+      "family": "normal",
+      "pid": 25172,
+      "receipt": "2026-09-12 20:43:54.439 (  24.801s) [(main thread)   ]            logging.cpp:102   INFO| [gm-sheet-test]: [gm-sheet-test] PASS: native sheets 207,208,209,210,211; shared pins, queued texture, inherited resets and free verified",
+      "expected_warning_count": 7,
+      "log_sha256": "a757a61e91129c3a42728abcecf7239897243fde399505bfb58793086d556db7"
+    },
+    {
+      "family": "extreme",
+      "pid": 36156,
+      "receipt": "2026-09-12 20:45:15.283 (  25.382s) [(main thread)   ]            logging.cpp:102   INFO| [gm-sheet-test]: [gm-sheet-test] PASS: native sheets 207,208,209,210,211; shared pins, queued texture, inherited resets and free verified",
+      "expected_warning_count": 7,
+      "log_sha256": "68258ba972e0f9b529ebd085e20707364b8c7ddbd4f97e5d085e0564036fee47"
+    }
+  ],
+  "cleanup": "Both processes closed normally; released at 20:45:55 CEST. Original config/module restored byte-for-byte; no save written."
+}

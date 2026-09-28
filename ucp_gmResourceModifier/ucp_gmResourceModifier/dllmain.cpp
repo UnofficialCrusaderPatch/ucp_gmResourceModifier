@@ -41,14 +41,25 @@ extern "C" __declspec(dllexport) int __cdecl luaopen_gmResourceModifier(lua_Stat
   lua_pushinteger(L, (DWORD)&shcOffsetStart);
   lua_setfield(L, -2, "address_ShcOffsetStart");
 
+  lua_pushinteger(L, (DWORD)&shcFirstImageStart);
+  lua_setfield(L, -2, "address_ShcFirstImageStart");
+  lua_pushinteger(L, (DWORD)&shcGmCount);
+  lua_setfield(L, -2, "address_ShcGmCount");
+
   // return lua funcs
 
   lua_pushcfunction(L, lua_SetGm);
   lua_setfield(L, -2, "lua_SetGm");
   lua_pushcfunction(L, lua_LoadGm1Resource);
   lua_setfield(L, -2, "lua_LoadGm1Resource");
+  lua_pushcfunction(L, lua_LoadCompleteGm1Resource);
+  lua_setfield(L, -2, "lua_LoadCompleteGm1Resource");
   lua_pushcfunction(L, lua_FreeGm1Resource);
   lua_setfield(L, -2, "lua_FreeGm1Resource");
+  lua_pushcfunction(L, lua_ReserveGm);
+  lua_setfield(L, -2, "lua_ReserveGm");
+  lua_pushcfunction(L, lua_GetReservedGm);
+  lua_setfield(L, -2, "lua_GetReservedGm");
   lua_pushcfunction(L, lua_LoadResourceFromImage);
   lua_setfield(L, -2, "lua_LoadResourceFromImage");
 

@@ -72,6 +72,40 @@ The provided functions are the following:
 
 ### Lua-Exports
 
+Version 0.3.0 also exposes inherited-sheet reservations in both Lua and C++:
+
+* `int ReserveGm(int baseGm, int resourceId)` is called before native GM loading.
+  It pins a resource loaded with `LoadGm1Resource` and returns a reservation token
+  or `-1`. The resource must match the base sheet's type and image count. The token
+  is **not** a native sheet ID. Reservations are allocated in request order.
+* `int GetReservedGm(int token)` returns the admitted native sheet ID after
+  initialization, or `-1` before initialization/on failure. Consume this result
+  through the framework's existing `hooks.registerHookCallback("afterInit", ...)`.
+  A required consumer must stop startup on failure; that hook catches ordinary
+  Lua errors, so an assertion alone is insufficient. The existing framework
+  `log(FATAL, ...)` path terminates startup.
+
+Admission validates the whole pending batch before writing any reserved native
+layout. Invalid bases, incompatible layouts or exhausted 240-sheet/66000-image
+capacity reject the whole batch. Resource pins are released when initialization
+finishes, including failure. On success, `SetGm` retains the ordinary replacement
+references. Resetting the allocated sheet restores the inherited **native** base
+sheet; it does not deallocate or recycle its ID. Existing texture replacements
+keep their request order and are applied before reserved custom sheets. Failed
+resources can be freed normally. Reserve only during startup, on the game thread.
+
+The API supplies sheet storage, not a new projectile type or renderer. Consumers
+must retain their native animation/flight/damage owners. No capacity is expanded.
+See [the acceptance record](tests/README.md) for current verification limits.
+
+Version 0.3.1 adds `LoadCompleteGm1Resource(path, imageCount, gm1Type)` to the Lua
+module. It returns the resource ID and a lowercase SHA-256 digest of the exact
+loaded bytes, or `-1, nil` on failure. It accepts only a complete, self-contained
+sheet of GM1 type 1, 2 or 6 with the requested layout and validates image bounds and token streams
+before preparing native resources. The file is read once by this owner; consumers
+can use the digest in save/config identity and pass the returned ID to `ReserveGm`.
+The existing `LoadGm1Resource` remains available for partial texture replacement.
+
 The Lua exports are parameters and functions accessible through the module object.
 
 * `int LoadGm1Resource(string filepath)`  
