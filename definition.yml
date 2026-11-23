@@ -5,3 +5,6 @@ author: TheRedDaemon
 meta:
   version: 1.0.0
 type: module
+tags:
+- textures
+- tools
