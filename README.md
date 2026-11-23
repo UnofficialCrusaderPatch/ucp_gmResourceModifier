@@ -98,10 +98,6 @@ The Lua exports are parameters and functions accessible through the module objec
 * `int ReserveGm(int baseGm, int resourceId)`, `int GetReservedGm(int token)`  
   Identical to C++ version.
 
-* `int, string LoadCompleteGm1Resource(string filepath, int imageCount, int gm1Type)`  
-  Loads a complete gm1 file of type 1, 2 or 6 with the given image count.
-  Returns the resource id and the SHA-256 of the file, or `-1, nil`.
-
 ### Special Thanks
 
 To all of the UCP Team, the [Ghidra project](https://github.com/NationalSecurityAgency/ghidra) and

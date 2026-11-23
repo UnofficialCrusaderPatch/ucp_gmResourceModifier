@@ -17,7 +17,7 @@ namespace GmResourceModifierHeader
   using FuncReserveGm = int(__stdcall*)(int baseGm, int resourceId);
   using FuncGetReservedGm = int(__stdcall*)(int reservation);
 
-  inline constexpr char const* NAME_VERSION{ "0.3.0" };
+  inline constexpr char const* NAME_VERSION{ "0.3.1" };
   inline constexpr char const* NAME_MODULE{ "gmResourceModifier" };
   inline constexpr char const* NAME_LIBRARY{ "gmResourceModifier.dll" };
 

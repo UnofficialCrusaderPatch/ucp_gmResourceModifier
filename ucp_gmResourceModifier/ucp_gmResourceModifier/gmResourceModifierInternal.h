@@ -1,7 +1,6 @@
 #pragma once
 
 #include <memory>
-#include <string>
 #include <unordered_map>
 
 #include "gmResourceModifierHeader.h"
@@ -95,8 +94,7 @@ private:
 
 public:
 
-  static int CreateGm1Resource(const char* filename, int expectedCount = 0,
-                               int expectedType = 0, std::string* sha256 = nullptr);
+  static int CreateGm1Resource(const char* filename);
   static int CreateGm1ResourceFromImage(const char* filepath);
   static bool FreeGm1Resource(int resourceId);
 
@@ -199,7 +197,6 @@ extern "C" __declspec(dllexport) int __stdcall LoadResourceFromImage(const char*
 /* LUA */
 
 extern "C" __declspec(dllexport) int __cdecl lua_LoadGm1Resource(lua_State * L);
-extern "C" __declspec(dllexport) int __cdecl lua_LoadCompleteGm1Resource(lua_State * L);
 extern "C" __declspec(dllexport) int __cdecl lua_SetGm(lua_State * L);
 extern "C" __declspec(dllexport) int __cdecl lua_FreeGm1Resource(lua_State * L);
 extern "C" __declspec(dllexport) int __cdecl lua_ReserveGm(lua_State * L);
