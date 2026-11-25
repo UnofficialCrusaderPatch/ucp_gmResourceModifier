@@ -96,6 +96,7 @@ public:
 
   static int CreateGm1Resource(const char* filename);
   static int CreateGm1ResourceFromImage(const char* filepath);
+  static int CreateOverlayResource(int gmID, int imageInGm, const char* filepath, int x, int y, float scale);
   static bool FreeGm1Resource(int resourceId);
 
   static void ReadyAllResources();  // for init
@@ -108,7 +109,11 @@ private:
   static int GetId();
   static void ReturnId(int id);
 
-  static bool ReadyResource(Gm1Resource& resource);
+  // Stores a complete resource under a new id; returns the id or -1.
+  static int AddResource(Gm1Resource&& resource, const char* filename, bool adaptColors);
+
+  // adaptColors false: the data already uses the game's pixel format.
+  static bool ReadyResource(Gm1Resource& resource, bool adaptColors = true);
 
   // the compiler should optimize this
   static void LogHelper(LogLevel level, const char* start, const char* filename, const char* error);
@@ -184,6 +189,11 @@ inline int* shcGmCount{};
 
 inline bool initDone{ false };
 
+// The sheet as the game loaded it, unaffected by replacements; nullptr before init or for an invalid id.
+const Gm1Resource* GetOriginalGm(int gmID);
+// Image data at an offset of the game's image offset table.
+const unsigned char* GetGameImageData(int offset);
+
 /* exports */
 
 extern "C" __declspec(dllexport) int __stdcall LoadGm1Resource(const char* filepath);
@@ -193,6 +203,7 @@ extern "C" __declspec(dllexport) int __stdcall ReserveGm(int baseGm, int resourc
 extern "C" __declspec(dllexport) int __stdcall GetReservedGm(int reservation);
 
 extern "C" __declspec(dllexport) int __stdcall LoadResourceFromImage(const char* filepath);
+extern "C" __declspec(dllexport) int __stdcall CreateOverlayResource(int gmID, int imageInGm, const char* filepath, int x, int y, float scale);
 
 /* LUA */
 
@@ -203,3 +214,4 @@ extern "C" __declspec(dllexport) int __cdecl lua_ReserveGm(lua_State * L);
 extern "C" __declspec(dllexport) int __cdecl lua_GetReservedGm(lua_State * L);
 
 extern "C" __declspec(dllexport) int __cdecl lua_LoadResourceFromImage(lua_State * L);
+extern "C" __declspec(dllexport) int __cdecl lua_CreateOverlayResource(lua_State * L);

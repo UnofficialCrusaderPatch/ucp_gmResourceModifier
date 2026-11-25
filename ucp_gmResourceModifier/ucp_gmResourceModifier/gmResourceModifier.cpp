@@ -249,14 +249,6 @@ void Gm1ResourceManager::LogHelper(const LogLevel level, const char* start, cons
 
 int Gm1ResourceManager::CreateGm1Resource(const char* filename)
 {
-  
-  int newId{ GetId() };
-  if (newId < 0)
-  {
-    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "All ids used.");
-    return -1;
-  }
-
   // create temp
   std::unique_ptr<Gm1Header> gm1HeaderTemp;
   std::vector<int> imageOffsetTemp{};
@@ -315,26 +307,37 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
   catch (const std::exception& e)
   {
     LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, e.what());
-    ReturnId(newId);
     return -1;
   }
 
-  auto [it, success]{ resources.try_emplace(newId) };
+  Gm1Resource resource{};
+  resource.gm1Header.swap(gm1HeaderTemp);
+  resource.imageHeader.swap(imageHeaderTemp);
+  resource.imageSizes.swap(imageSizesTemp);
+  resource.imageOffset.swap(imageOffsetTemp);
+  resource.imageData.swap(imageDataTemp);
+  return AddResource(std::move(resource), filename, true);
+}
+
+int Gm1ResourceManager::AddResource(Gm1Resource&& newResource, const char* filename, bool adaptColors)
+{
+  int newId{ GetId() };
+  if (newId < 0)
+  {
+    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "All ids used.");
+    return -1;
+  }
+
+  auto [it, success]{ resources.try_emplace(newId, std::move(newResource)) };
   if (!success)
   {
     LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "Failed to place resource in map.");
     ReturnId(newId);
     return -1;
   }
-  
-  Gm1Resource& resource{ it->second };
-  resource.gm1Header.swap(gm1HeaderTemp);
-  resource.imageHeader.swap(imageHeaderTemp);
-  resource.imageSizes.swap(imageSizesTemp);
-  resource.imageOffset.swap(imageOffsetTemp);
-  resource.imageData.swap(imageDataTemp);
 
-  if (initDone && !Gm1ResourceManager::ReadyResource(resource))
+  Gm1Resource& resource{ it->second };
+  if (initDone && !Gm1ResourceManager::ReadyResource(resource, adaptColors))
   {
     LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "Failed to ready resource.");
     ReturnId(newId);
@@ -346,7 +349,7 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
   return newId;
 }
 
-bool Gm1ResourceManager::ReadyResource(Gm1Resource& resource)
+bool Gm1ResourceManager::ReadyResource(Gm1Resource& resource, bool adaptColors)
 {
   if (!initDone)
   {
@@ -360,7 +363,10 @@ bool Gm1ResourceManager::ReadyResource(Gm1Resource& resource)
     return false;
   }
 
-  ColorAdapter::AdaptGm1Resource(resource); // needs relative to object offsets
+  if (adaptColors)
+  {
+    ColorAdapter::AdaptGm1Resource(resource); // needs relative to object offsets
+  }
 
   // adjust offsets to SHC memory
   for (size_t i{ 0 }; i < resource.gm1Header->numberOfPicturesInFile; ++i)
@@ -489,6 +495,23 @@ void Replacer::readyOrigResource()
   std::memcpy(origResource->imageHeader.data(), &shcImageHeaderStart[firstImageIndex], numberOfPictures * sizeof(ImageHeader));
 
   origResource->done = true;
+}
+
+
+const Gm1Resource* GetOriginalGm(int gmID)
+{
+  if (!initDone || gmID < 0 || gmID >= MAX_GM_SHEETS)
+  {
+    return nullptr;
+  }
+  Replacer& replacer{ replacerVector[gmID] };
+  replacer.readyOrigResource();
+  return replacer.origResource.get();
+}
+
+const unsigned char* GetGameImageData(int offset)
+{
+  return reinterpret_cast<const unsigned char*>(shcGmDataAddr) + offset;
 }
 
 

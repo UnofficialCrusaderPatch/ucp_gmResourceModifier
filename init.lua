@@ -76,6 +76,7 @@ exports.enable = function(self, moduleConfig, globalConfig)
   self.LoadResourceFromImage = function(self, ...) return requireTable.lua_LoadResourceFromImage(...) end
   self.ReserveGm = function(self, ...) return requireTable.lua_ReserveGm(...) end
   self.GetReservedGm = function(self, ...) return requireTable.lua_GetReservedGm(...) end
+  self.CreateOverlayResource = function(self, ...) return requireTable.lua_CreateOverlayResource(...) end
   
 
   --[[ modify code ]]--
