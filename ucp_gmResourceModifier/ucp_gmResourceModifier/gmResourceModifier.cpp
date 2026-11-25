@@ -473,28 +473,28 @@ void Replacer::readyOrigResource()
     return; // already done
   }
 
-  origResource = std::make_unique<Gm1Resource>();
-  origResource->gm1Header = std::make_unique<Gm1Header>();
-  std::memcpy(origResource->gm1Header.get(), &shcHeaderStart[gmIndex], sizeof(Gm1Header));
+  // built completely before it is cached
+  auto resource{ std::make_unique<Gm1Resource>() };
+  resource->gm1Header = std::make_unique<Gm1Header>();
+  std::memcpy(resource->gm1Header.get(), &shcHeaderStart[gmIndex], sizeof(Gm1Header));
 
-  int numberOfPictures{ static_cast<int>(origResource->gm1Header->numberOfPicturesInFile) };
+  int numberOfPictures{ static_cast<int>(resource->gm1Header->numberOfPicturesInFile) };
 
-  if (numberOfPictures < 1)
+  if (numberOfPictures > 0)
   {
-    return; // we are done here, there is nothing in this index
+    resource->imageOffset.resize(numberOfPictures);
+    std::memcpy(resource->imageOffset.data(), &shcOffsetStart[firstImageIndex], numberOfPictures * sizeof(int));
+
+    resource->imageSizes.resize(numberOfPictures);
+    std::memcpy(resource->imageSizes.data(), &shcSizesStart[firstImageIndex], numberOfPictures * sizeof(int));
+
+    resource->imageHeader.resize(numberOfPictures);
+    std::memcpy(resource->imageHeader.data(), &shcImageHeaderStart[firstImageIndex], numberOfPictures * sizeof(ImageHeader));
+
+    resource->done = true;
   }
 
-  // copy data
-  origResource->imageOffset.resize(numberOfPictures);
-  std::memcpy(origResource->imageOffset.data(), &shcOffsetStart[firstImageIndex], numberOfPictures * sizeof(int));
-
-  origResource->imageSizes.resize(numberOfPictures);
-  std::memcpy(origResource->imageSizes.data(), &shcSizesStart[firstImageIndex], numberOfPictures * sizeof(int));
-
-  origResource->imageHeader.resize(numberOfPictures);
-  std::memcpy(origResource->imageHeader.data(), &shcImageHeaderStart[firstImageIndex], numberOfPictures * sizeof(ImageHeader));
-
-  origResource->done = true;
+  origResource = std::move(resource);
 }
 
 
@@ -506,7 +506,7 @@ const Gm1Resource* GetOriginalGm(int gmID)
   }
   Replacer& replacer{ replacerVector[gmID] };
   replacer.readyOrigResource();
-  return replacer.origResource.get();
+  return replacer.origResource->done ? replacer.origResource.get() : nullptr;
 }
 
 const unsigned char* GetGameImageData(int offset)

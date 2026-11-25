@@ -592,9 +592,15 @@ extern "C" __declspec(dllexport) int __stdcall CreateOverlayResource(int gmID, i
   {
     return Gm1ResourceManager::CreateOverlayResource(gmID, imageInGm, filepath, x, y, scale);
   }
-  catch (const std::exception& e)
+  catch (...)
   {
-    LogImageWarning("CreateOverlayResource", e.what());
+    try
+    {
+      Log(LOG_WARNING, "[gmResourceModifier]: CreateOverlayResource: Out of memory or internal error.");
+    }
+    catch (...)
+    {
+    }
     return -1;
   }
 }
