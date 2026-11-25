@@ -69,6 +69,15 @@ The provided functions are the following:
   It can therefore only be used by this or compatible types.
   The supported formats depend on the OS. 
 
+* `int ReserveGm(int baseGm, int resourceId)`  
+  Call before the game loads its gm files. Reserves a new sheet that inherits `baseGm`
+  and shows the resource, which must match the base sheet's type and image count.
+  Returns a reservation token (not a gm id) or `-1`.
+
+* `int GetReservedGm(int token)`  
+  Returns the gm id of the reserved sheet once the game has loaded its gm files,
+  or `-1` before that or if the reservation failed.
+
 
 ### Lua-Exports
 
@@ -84,6 +93,9 @@ The Lua exports are parameters and functions accessible through the module objec
   Identical to C++ version.
 
 * `int LoadResourceFromImage(string filepath)`  
+  Identical to C++ version.
+
+* `int ReserveGm(int baseGm, int resourceId)`, `int GetReservedGm(int token)`  
   Identical to C++ version.
 
 ### Special Thanks

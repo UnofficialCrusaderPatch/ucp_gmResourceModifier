@@ -9,6 +9,8 @@
 #include <ios>
 #include <fstream>
 #include <sstream>
+#include <cstdint>
+#include <stdexcept>
 
 
 // static variables:
@@ -21,6 +23,71 @@ static std::vector<std::tuple<int, int, int, int>> preRequests{}; // contains re
 static Gm1Header* shcHeaderStart{};
 static int shcGmDataAddr{};
 static BOOL shcOffsetModifierFlag{};
+
+// Native capacities: GM sheets and image table entries.
+static constexpr int MAX_GM_SHEETS{ 240 };
+static constexpr int MAX_IMAGES{ 66000 };
+
+// Native IDs are available only after the loader admits the complete batch.
+struct SheetReservation
+{
+  int baseGm;
+  Gm1Resource* resource;
+  int slot{ -1 };
+};
+static std::vector<SheetReservation> sheetReservations{};
+
+static bool AdmitReservedSheets(ColorAdapter* renderer)
+{
+  if (sheetReservations.empty()) return true;
+  if (!shcFirstImageStart || !shcGmCount) return false;
+
+  // Verified renderer fields.
+  auto& nextImage = *reinterpret_cast<int*>(reinterpret_cast<char*>(renderer) + 0x48);
+  auto& nextGm = *reinterpret_cast<int*>(reinterpret_cast<char*>(renderer) + 0x4c);
+  if (nextGm < 1 || nextGm > MAX_GM_SHEETS || *shcGmCount != nextGm ||
+      sheetReservations.size() > static_cast<size_t>(MAX_GM_SHEETS - nextGm)) return false;
+  if (nextImage < 1 || nextImage > MAX_IMAGES) return false;
+
+  size_t images{ 1 };
+  for (int gm = 0; gm < MAX_GM_SHEETS; ++gm)
+  {
+    const size_t count = shcHeaderStart[gm].numberOfPicturesInFile;
+    if (count > MAX_IMAGES - images || (gm >= nextGm && count != 0)) return false;
+    if (count && shcFirstImageStart[gm] != static_cast<int>(images)) return false;
+    images += count;
+  }
+  if (images != static_cast<size_t>(nextImage)) return false;
+
+  for (const auto& reservation : sheetReservations)
+  {
+    if (reservation.baseGm >= nextGm) return false;
+    const auto& base = shcHeaderStart[reservation.baseGm];
+    const auto& custom = *reservation.resource->gm1Header;
+    const size_t count = base.numberOfPicturesInFile;
+    if (!count || count != custom.numberOfPicturesInFile || base.gm1Type != custom.gm1Type ||
+        count > MAX_IMAGES - images) return false;
+    images += count;
+  }
+
+  // All layout/capacity checks precede the first native write. Replacers snapshot
+  // these inherited originals and retain SetGm's reset/free semantics.
+  for (auto& reservation : sheetReservations)
+  {
+    const auto& base = shcHeaderStart[reservation.baseGm];
+    const size_t count = base.numberOfPicturesInFile;
+    const int source = shcFirstImageStart[reservation.baseGm];
+    shcHeaderStart[nextGm] = base;
+    std::memcpy(&shcImageHeaderStart[nextImage], &shcImageHeaderStart[source], count * sizeof(ImageHeader));
+    std::memcpy(&shcSizesStart[nextImage], &shcSizesStart[source], count * sizeof(int));
+    std::memcpy(&shcOffsetStart[nextImage], &shcOffsetStart[source], count * sizeof(int));
+    shcFirstImageStart[nextGm] = nextImage;
+    reservation.slot = nextGm++;
+    nextImage += static_cast<int>(count);
+  }
+  *shcGmCount = nextGm;
+  return true;
+}
 
 // used for init
 void __thiscall ColorAdapter::detouredLoadGmFiles(char* fileNameArray)
@@ -44,6 +111,10 @@ void __thiscall ColorAdapter::detouredLoadGmFiles(char* fileNameArray)
   // needed to adjust image offset and sizes (although, the whole data is still kept in memory) (currently from SHC 1.41)
   shcOffsetModifierFlag = *(BOOL*)(((unsigned char*)shcTransformStruct) + 80);
 
+  const bool reservationsAdmitted = AdmitReservedSheets(this);
+  if (!reservationsAdmitted)
+    Log(LOG_WARNING, "[gmResourceModifier]: Additional GM sheets could not be admitted; no reserved layout was installed.");
+
   initDone = true;  // needed here to ready resources
 
   // ready everything:
@@ -64,6 +135,14 @@ void __thiscall ColorAdapter::detouredLoadGmFiles(char* fileNameArray)
     SetGm(gmId, imageInGm, resourceId, imageInResource); // need to call replace in order of definition
   }
   preRequests.clear();
+
+  for (auto& reservation : sheetReservations)
+  {
+    if (reservationsAdmitted && !SetGm(reservation.slot, -1, reservation.resource->resourceId, -1))
+      reservation.slot = -1;
+    --reservation.resource->refCounter; // release the pending reservation pin
+    reservation.resource = nullptr;
+  }
 }
 
 
@@ -193,10 +272,24 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
   {
     ifs.open(filename, std::ios::binary);
 
+    ifs.seekg(0, std::ios::end);
+    const auto fileLength = ifs.tellg();
+    ifs.seekg(0, std::ios::beg);
+    if (fileLength < static_cast<std::streamoff>(sizeof(Gm1Header)))
+      throw std::runtime_error("truncated GM1 header");
+
     gm1HeaderTemp = std::make_unique<Gm1Header>();
     ifs.read((char*) gm1HeaderTemp.get(), sizeof(Gm1Header));
 
-    int numberOfPictures{ static_cast<int>(gm1HeaderTemp->numberOfPicturesInFile) };
+    const size_t count = gm1HeaderTemp->numberOfPicturesInFile;
+    // Check the file against the game's image table before any
+    // count- or dataSize-controlled allocation, including wrapped counts.
+    const uint64_t required = sizeof(Gm1Header) +
+      static_cast<uint64_t>(count) * (2 * sizeof(int) + sizeof(ImageHeader)) +
+      gm1HeaderTemp->dataSize;
+    if (!count || count > MAX_IMAGES || required > static_cast<uint64_t>(fileLength))
+      throw std::runtime_error("invalid GM1 count or payload length");
+    const int numberOfPictures{ static_cast<int>(count) };
 
     imageOffsetTemp.resize(numberOfPictures);
     ifs.read((char*) imageOffsetTemp.data(), numberOfPictures * sizeof(int));
@@ -207,16 +300,21 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
     imageHeaderTemp.resize(numberOfPictures);
     ifs.read((char*) imageHeaderTemp.data(), numberOfPictures * sizeof(ImageHeader));
 
+    for (int i = 0; i < numberOfPictures; ++i)
+    {
+      if (imageOffsetTemp[i] < 0 || imageSizesTemp[i] < 0 ||
+          static_cast<uint64_t>(imageOffsetTemp[i]) + imageSizesTemp[i] > gm1HeaderTemp->dataSize)
+        throw std::runtime_error("GM1 image data lies outside its payload");
+    }
+
     imageDataTemp.resize(gm1HeaderTemp->dataSize);
     ifs.read((char*) imageDataTemp.data(), gm1HeaderTemp->dataSize);
 
     ifs.close();  // closing manually to trigger error here and not later
   }
-  catch (std::ios_base::failure& e)
+  catch (const std::exception& e)
   {
-    char errMsg[100];
-    strerror_s(errMsg, 100, errno);
-    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, errMsg);
+    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, e.what());
     ReturnId(newId);
     return -1;
   }
@@ -473,6 +571,23 @@ void Replacer::copyToShc(Gm1Resource& resource, int imageIndex, int resourceImag
 
 /* export C */
 
+extern "C" __declspec(dllexport) int __stdcall ReserveGm(int baseGm, int resourceId)
+{
+  if (initDone || baseGm < 0 || baseGm >= MAX_GM_SHEETS || sheetReservations.size() >= MAX_GM_SHEETS) return -1;
+  Gm1Resource* resource = Gm1ResourceManager::GetResource(resourceId);
+  if (!resource || !resource->gm1Header->numberOfPicturesInFile ||
+      resource->gm1Header->numberOfPicturesInFile > MAX_IMAGES) return -1;
+  sheetReservations.push_back({ baseGm, resource });
+  ++resource->refCounter;
+  return static_cast<int>(sheetReservations.size() - 1);
+}
+
+extern "C" __declspec(dllexport) int __stdcall GetReservedGm(int reservation)
+{
+  if (!initDone || reservation < 0 || static_cast<size_t>(reservation) >= sheetReservations.size()) return -1;
+  return sheetReservations[reservation].slot;
+}
+
 extern "C" __declspec(dllexport) int __stdcall LoadGm1Resource(const char* filepath)
 {
   return Gm1ResourceManager::CreateGm1Resource(filepath);
@@ -579,6 +694,25 @@ extern "C" __declspec(dllexport) bool __stdcall FreeGm1Resource(int resourceId)
 
 
 /* export LUA */
+
+extern "C" __declspec(dllexport) int __cdecl lua_ReserveGm(lua_State* L)
+{
+  lua_Integer base = luaL_checkinteger(L, 1);
+  lua_Integer resource = luaL_checkinteger(L, 2);
+  // Lua integers are wider than this native ABI. Reject instead of wrapping IDs.
+  if (base < 0 || base >= MAX_GM_SHEETS || resource < 0 || resource > INT_MAX)
+    lua_pushinteger(L, -1);
+  else
+    lua_pushinteger(L, ReserveGm(static_cast<int>(base), static_cast<int>(resource)));
+  return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl lua_GetReservedGm(lua_State* L)
+{
+  lua_Integer token = luaL_checkinteger(L, 1);
+  lua_pushinteger(L, token < 0 || token >= MAX_GM_SHEETS ? -1 : GetReservedGm(static_cast<int>(token)));
+  return 1;
+}
 
 extern "C" __declspec(dllexport) int __cdecl lua_LoadGm1Resource(lua_State * L)
 {
