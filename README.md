@@ -81,9 +81,9 @@ The provided functions are the following:
 * `int CreateOverlayResource(int gmID, int imageInGm, const char* filepath, int x, int y, float scale)`  
   Call after the game has loaded its gm files. Creates a single picture resource from the
   game's original picture `imageInGm` of the interface gm `gmID`, with the image file drawn over it.
-  The image is scaled by `scale` and placed with its top left corner at pixel `x`, `y`.
-  Replacements do not affect the original. Size and header stay those of the original picture.
-  Returns the resource id or `-1`.
+  The image is scaled by `scale` (above 0, at most 16) and placed with its top left corner at pixel `x`, `y`;
+  only the part over the original picture is used. Replacements do not affect the original.
+  Size and header stay those of the original picture. Returns the resource id or `-1`. Since 0.3.2.
 
 
 ### Lua-Exports

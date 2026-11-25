@@ -60,6 +60,8 @@ extern "C" __declspec(dllexport) int __cdecl luaopen_gmResourceModifier(lua_Stat
   lua_setfield(L, -2, "lua_GetReservedGm");
   lua_pushcfunction(L, lua_LoadResourceFromImage);
   lua_setfield(L, -2, "lua_LoadResourceFromImage");
+  lua_pushcfunction(L, lua_CreateOverlayResource);
+  lua_setfield(L, -2, "lua_CreateOverlayResource");
 
   return 1;
 }

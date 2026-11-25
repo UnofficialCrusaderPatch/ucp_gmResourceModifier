@@ -1,6 +1,7 @@
 
 #include "pch.h"
 
+#include <string>
 #include <wincodec.h>
 
 #include "gmResourceModifierInternal.h"
@@ -44,16 +45,24 @@ static std::vector<WCHAR> GetWideCharFilepathFromUTF8(const char* utf8Str)
 }
 
 
+// image headers store sizes as unsigned short
+static constexpr long long MAX_IMAGE_SIDE{ USHRT_MAX };
+
+static void LogImageWarning(const char* caller, const char* message)
+{
+  Log(LOG_WARNING, (std::string{ "[gmResourceModifier]: " } + caller + ": " + message).c_str());
+}
+
 // sources:
 // https://docs.microsoft.com/en-us/windows/win32/wic/-wic-api
 // https://docs.microsoft.com/de-de/windows/win32/wic/-wic-creating-decoder
-static bool OpenImageDecoder(const char* filepath, IUnknownWrapper<IWICBitmapDecoder>& decoderInterface)
+static bool OpenImageDecoder(const char* caller, const char* filepath, IUnknownWrapper<IWICBitmapDecoder>& decoderInterface)
 {
   if (!imageFactory)
   {
     if (CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(imageFactory.expose())) != S_OK)
     {
-      Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to obtain image factory interface.");
+      LogImageWarning(caller, "Was unable to obtain image factory interface.");
       return false;
     }
   }
@@ -61,7 +70,7 @@ static bool OpenImageDecoder(const char* filepath, IUnknownWrapper<IWICBitmapDec
   std::vector<WCHAR> filepathWideStr{ GetWideCharFilepathFromUTF8(filepath) };
   if (filepathWideStr.empty())
   {
-    Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to decode filepath (UTF-8).");
+    LogImageWarning(caller, "Was unable to decode filepath (UTF-8).");
     return false;
   }
 
@@ -73,17 +82,27 @@ static bool OpenImageDecoder(const char* filepath, IUnknownWrapper<IWICBitmapDec
     decoderInterface.expose()           // Pointer to the decoder
   )))
   {
-    Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to obtain decoder. File invalid or missing.");
+    LogImageWarning(caller, "Was unable to obtain decoder. File invalid or missing.");
     return false;
   }
   return true;
 }
 
 
+// A rectangle in resized image coordinates; it may extend beyond the image.
+struct ClipArea
+{
+  long long left;
+  long long top;
+  long long width;
+  long long height;
+};
+
 // Pixel is the element type of the requested WIC format; scale resizes with WIC's Fant interpolation.
+// Copies only the part of the resized image inside clip; outRect receives that part in resized image coordinates.
 template <typename Pixel>
-static std::vector<Pixel> GetFrameData(IUnknownWrapper<IWICBitmapDecoder>& decoderInterface,
-  size_t frameIndex, REFWICPixelFormatGUID format, float scale, size_t& outWidth, size_t& outHeight)
+static std::vector<Pixel> GetFrameData(const char* caller, IUnknownWrapper<IWICBitmapDecoder>& decoderInterface,
+  size_t frameIndex, REFWICPixelFormatGUID format, float scale, const ClipArea& clip, WICRect& outRect)
 {
   std::vector<Pixel> rawPixel{};
   UINT width{};
@@ -93,20 +112,28 @@ static std::vector<Pixel> GetFrameData(IUnknownWrapper<IWICBitmapDecoder>& decod
   IUnknownWrapper<IWICBitmapFrameDecode> frame;
   if (FAILED(decoderInterface->GetFrame(frameIndex, frame.expose())))
   {
-    Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to obtain frame.");
+    LogImageWarning(caller, "Was unable to obtain frame.");
     return {};
   }
 
   IUnknownWrapper<IWICBitmapSource> converted;
   if (FAILED(WICConvertBitmapSource(format, frame.get(), converted.expose())))
   {
-    Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to transform an image into intermediate format.");
+    LogImageWarning(caller, "Was unable to transform an image into intermediate format.");
     return {};
   }
 
   if (FAILED(converted->GetSize(&width, &height)))
   {
-    Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to obtain frame size.");
+    LogImageWarning(caller, "Was unable to obtain frame size.");
+    return {};
+  }
+
+  const long long scaledWidth{ static_cast<long long>(width * static_cast<double>(scale) + 0.5) };
+  const long long scaledHeight{ static_cast<long long>(height * static_cast<double>(scale) + 0.5) };
+  if (width == 0 || height == 0 || scaledWidth > MAX_IMAGE_SIDE || scaledHeight > MAX_IMAGE_SIDE)
+  {
+    LogImageWarning(caller, "The image is empty or too large.");
     return {};
   }
 
@@ -114,38 +141,54 @@ static std::vector<Pixel> GetFrameData(IUnknownWrapper<IWICBitmapDecoder>& decod
   IUnknownWrapper<IWICBitmapScaler> scaler;
   if (scale != 1.0f)
   {
-    width = max(1u, static_cast<UINT>(width * scale + 0.5f));
-    height = max(1u, static_cast<UINT>(height * scale + 0.5f));
+    width = static_cast<UINT>(scaledWidth > 1 ? scaledWidth : 1);
+    height = static_cast<UINT>(scaledHeight > 1 ? scaledHeight : 1);
     if (FAILED(imageFactory->CreateBitmapScaler(scaler.expose())) ||
         FAILED(scaler->Initialize(converted.get(), width, height, WICBitmapInterpolationModeFant)))
     {
-      Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to scale the image.");
+      LogImageWarning(caller, "Was unable to scale the image.");
       return {};
     }
     source = scaler.get();
   }
 
-  rawPixel.resize(width * height);
-  if (FAILED(source->CopyPixels(nullptr, width * sizeof(Pixel), width * height * sizeof(Pixel), (BYTE*)rawPixel.data())))
+  const long long left{ clip.left > 0 ? clip.left : 0 };
+  const long long top{ clip.top > 0 ? clip.top : 0 };
+  const long long right{ clip.left + clip.width < width ? clip.left + clip.width : width };
+  const long long bottom{ clip.top + clip.height < height ? clip.top + clip.height : height };
+  if (right <= left || bottom <= top)
   {
-    Log(LOG_WARNING, "[gmResourceModifier]: LoadResourceFromImage: Was unable to obtain raw pixels.");
+    LogImageWarning(caller, "The image lies outside the target picture.");
     return {};
   }
+  outRect = { static_cast<INT>(left), static_cast<INT>(top), static_cast<INT>(right - left), static_cast<INT>(bottom - top) };
 
-  outWidth = width;
-  outHeight = height;
+  const unsigned long long byteSize{ static_cast<unsigned long long>(outRect.Width) * outRect.Height * sizeof(Pixel) };
+  if (byteSize > UINT_MAX)
+  {
+    LogImageWarning(caller, "The image is too large.");
+    return {};
+  }
+  rawPixel.resize(static_cast<size_t>(outRect.Width) * outRect.Height);
+  if (FAILED(source->CopyPixels(&outRect, outRect.Width * sizeof(Pixel), static_cast<UINT>(byteSize), (BYTE*)rawPixel.data())))
+  {
+    LogImageWarning(caller, "Was unable to obtain raw pixels.");
+    return {};
+  }
   return rawPixel;
 }
 
 
 // Decodes a TGX image into colour words and an opacity mask. Returns false on malformed data.
-static bool DecodeTGX(const unsigned char* data, size_t size, size_t width, size_t height,
+// Every row ends with a newline; one data byte describes at most 32 pixels.
+static bool DecodeTGX(const unsigned char* data, int dataSize, size_t width, size_t height,
   std::vector<unsigned short>& rawPixel, std::vector<bool>& opaque)
 {
-  if (!width || !height)
+  if (!width || !height || dataSize <= 0 || static_cast<unsigned long long>(width) * height > static_cast<unsigned long long>(dataSize) * 32)
   {
     return false;
   }
+  const size_t size{ static_cast<size_t>(dataSize) };
   rawPixel.assign(width * height, 0);
   opaque.assign(width * height, false);
 
@@ -211,7 +254,7 @@ static bool DecodeTGX(const unsigned char* data, size_t size, size_t width, size
     }
     x += length;
   }
-  return true;
+  return y == height;
 }
 
 
@@ -332,7 +375,7 @@ static std::vector<unsigned char> TransformToTGX(const std::vector<unsigned shor
 int Gm1ResourceManager::CreateGm1ResourceFromImage(const char* filepath)
 {
   IUnknownWrapper<IWICBitmapDecoder> decoderInterface;
-  if (!OpenImageDecoder(filepath, decoderInterface))
+  if (!OpenImageDecoder("LoadResourceFromImage", filepath, decoderInterface))
   {
     return -1;
   }
@@ -351,13 +394,15 @@ int Gm1ResourceManager::CreateGm1ResourceFromImage(const char* filepath)
 
   for (size_t i{ 0 }; i < frameCount; ++i)
   {
-    size_t width{ 0 };
-    size_t height{ 0 };
-    std::vector<unsigned short> rawPixel{ GetFrameData<unsigned short>(decoderInterface, 0, GUID_WICPixelFormat16bppBGRA5551, 1.0f, width, height) };
+    WICRect rect{};
+    std::vector<unsigned short> rawPixel{ GetFrameData<unsigned short>("LoadResourceFromImage", decoderInterface, 0,
+      GUID_WICPixelFormat16bppBGRA5551, 1.0f, { 0, 0, MAX_IMAGE_SIDE, MAX_IMAGE_SIDE }, rect) };
     if (rawPixel.empty())
     {
       return -1;
     }
+    const size_t width{ static_cast<size_t>(rect.Width) };
+    const size_t height{ static_cast<size_t>(rect.Height) };
 
     std::vector<bool> opaque(rawPixel.size());
     for (size_t p{ 0 }; p < rawPixel.size(); ++p)
@@ -460,19 +505,24 @@ int Gm1ResourceManager::CreateOverlayResource(int gmID, int imageInGm, const cha
   }
 
   IUnknownWrapper<IWICBitmapDecoder> decoderInterface;
-  if (!OpenImageDecoder(filepath, decoderInterface))
+  if (!OpenImageDecoder("CreateOverlayResource", filepath, decoderInterface))
   {
     return -1;
   }
-  size_t overlayWidth{ 0 };
-  size_t overlayHeight{ 0 };
+  // only the part of the scaled image that covers the original image
+  WICRect rect{};
   // premultiplied BGRA bytes, read as 0xAARRGGBB
-  const std::vector<unsigned int> overlay{ GetFrameData<unsigned int>(decoderInterface, 0, GUID_WICPixelFormat32bppPBGRA, scale,
-    overlayWidth, overlayHeight) };
+  const std::vector<unsigned int> overlay{ GetFrameData<unsigned int>("CreateOverlayResource", decoderInterface, 0,
+    GUID_WICPixelFormat32bppPBGRA, scale, { -static_cast<long long>(x), -static_cast<long long>(y),
+    static_cast<long long>(width), static_cast<long long>(height) }, rect) };
   if (overlay.empty())
   {
     return -1;
   }
+  const size_t overlayWidth{ static_cast<size_t>(rect.Width) };
+  const size_t overlayHeight{ static_cast<size_t>(rect.Height) };
+  const size_t firstX{ static_cast<size_t>(rect.X + static_cast<long long>(x)) };
+  const size_t firstY{ static_cast<size_t>(rect.Y + static_cast<long long>(y)) };
 
   const bool rgb565{ *ColorAdapter::gamePixelFormat == ColorAdapter::PixelFormat::RGB_565 };
   const unsigned int greenMax{ rgb565 ? 63u : 31u };
@@ -481,13 +531,6 @@ int Gm1ResourceManager::CreateOverlayResource(int gmID, int imageInGm, const cha
   {
     for (size_t overlayX{ 0 }; overlayX < overlayWidth; ++overlayX)
     {
-      const int pixelX{ x + static_cast<int>(overlayX) };
-      const int pixelY{ y + static_cast<int>(overlayY) };
-      if (pixelX < 0 || pixelY < 0 || static_cast<size_t>(pixelX) >= width || static_cast<size_t>(pixelY) >= height)
-      {
-        continue;
-      }
-
       const unsigned int color{ overlay[overlayY * overlayWidth + overlayX] };
       const unsigned int alpha{ color >> 24 };
       if (alpha == 0)
@@ -498,7 +541,7 @@ int Gm1ResourceManager::CreateOverlayResource(int gmID, int imageInGm, const cha
       unsigned int green{ (color >> 8) & 0xff };
       unsigned int blue{ color & 0xff };
 
-      const size_t index{ pixelY * width + pixelX };
+      const size_t index{ (firstY + overlayY) * width + firstX + overlayX };
       if (opaque[index])
       {
         const unsigned short base{ rawPixel[index] };
@@ -545,7 +588,15 @@ extern "C" __declspec(dllexport) int __stdcall LoadResourceFromImage(const char*
 
 extern "C" __declspec(dllexport) int __stdcall CreateOverlayResource(int gmID, int imageInGm, const char* filepath, int x, int y, float scale)
 {
-  return Gm1ResourceManager::CreateOverlayResource(gmID, imageInGm, filepath, x, y, scale);
+  try
+  {
+    return Gm1ResourceManager::CreateOverlayResource(gmID, imageInGm, filepath, x, y, scale);
+  }
+  catch (const std::exception& e)
+  {
+    LogImageWarning("CreateOverlayResource", e.what());
+    return -1;
+  }
 }
 
 

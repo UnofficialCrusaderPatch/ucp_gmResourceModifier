@@ -18,7 +18,7 @@ namespace GmResourceModifierHeader
   using FuncGetReservedGm = int(__stdcall*)(int reservation);
   using FuncCreateOverlayResource = int(__stdcall*)(int gmID, int imageInGm, const char* filepath, int x, int y, float scale);
 
-  inline constexpr char const* NAME_VERSION{ "0.4.0" };
+  inline constexpr char const* NAME_VERSION{ "0.3.2" };
   inline constexpr char const* NAME_MODULE{ "gmResourceModifier" };
   inline constexpr char const* NAME_LIBRARY{ "gmResourceModifier.dll" };
 
