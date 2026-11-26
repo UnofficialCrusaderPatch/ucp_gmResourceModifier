@@ -69,10 +69,11 @@ static bool AdmitReservedSheets(ColorAdapter* renderer)
 
   // The game's tables are consistent; each reservation is checked before its own writes.
   // A slot with its own count starts with the resource's header; its pictures are
-  // installed once the resource is ready.
+  // installed once the resource is ready. A base is one of the game's own sheets.
+  const int gameSheets{ nextGm };
   for (auto& reservation : sheetReservations)
   {
-    if (reservation.baseGm >= nextGm || !shcHeaderStart[reservation.baseGm].numberOfPicturesInFile)
+    if (reservation.baseGm >= gameSheets || !shcHeaderStart[reservation.baseGm].numberOfPicturesInFile)
     {
       SkipReservation(reservation, "base gm not loaded");
       continue;
