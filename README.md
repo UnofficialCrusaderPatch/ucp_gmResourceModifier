@@ -85,7 +85,7 @@ The provided functions are the following:
   game's original picture `imageInGm` of the interface gm `gmID`, with the image file drawn over it.
   The image is scaled by `scale` (above 0, at most 16) and placed with its top left corner at pixel `x`, `y`;
   only the part over the original picture is used. Replacements do not affect the original.
-  Size and header stay those of the original picture. Returns the resource id or `-1`. Since 0.3.2.
+  Size and header stay those of the original picture. Returns the resource id or `-1`. Since 0.3.2. *initModuleFunctions()* does not require it; the pointer stays `nullptr` with an older module.
 
 
 ### Lua-Exports

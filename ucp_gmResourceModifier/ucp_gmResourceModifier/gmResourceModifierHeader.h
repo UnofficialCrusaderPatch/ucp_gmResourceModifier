@@ -38,7 +38,8 @@ namespace GmResourceModifierHeader
   inline FuncGetReservedGm GetReservedGm{ nullptr };
   inline FuncCreateOverlayResource CreateOverlayResource{ nullptr };
 
-  // returns true if the function variables of this header were successfully filled
+  // returns true if the function variables of this header were successfully filled;
+  // CreateOverlayResource (0.3.2) is optional and stays nullptr with an older module
   inline bool initModuleFunctions()
   {
     LoadGm1Resource = (FuncLoadResource) ucp_getProcAddressFromLibraryInModule(NAME_MODULE, NAME_LIBRARY, NAME_LOAD_RESOURCE);
@@ -49,7 +50,7 @@ namespace GmResourceModifierHeader
     GetReservedGm = (FuncGetReservedGm) ucp_getProcAddressFromLibraryInModule(NAME_MODULE, NAME_LIBRARY, NAME_GET_RESERVED_GM);
     CreateOverlayResource = (FuncCreateOverlayResource) ucp_getProcAddressFromLibraryInModule(NAME_MODULE, NAME_LIBRARY, NAME_CREATE_OVERLAY_RESOURCE);
 
-    return LoadGm1Resource && SetGm && FreeGm1Resource && LoadResourceFromImage && ReserveGm && GetReservedGm && CreateOverlayResource;
+    return LoadGm1Resource && SetGm && FreeGm1Resource && LoadResourceFromImage && ReserveGm && GetReservedGm;
   }
 }
 
