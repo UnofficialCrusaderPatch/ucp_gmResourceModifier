@@ -60,7 +60,13 @@ static bool OpenImageDecoder(const char* caller, const char* filepath, IUnknownW
 {
   if (!imageFactory)
   {
-    if (CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(imageFactory.expose())) != S_OK)
+    HRESULT result{ CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(imageFactory.expose())) };
+    // The game calls CoInitialize during its start; an image requested earlier sets COM up the same way.
+    if (result == CO_E_NOTINITIALIZED && SUCCEEDED(CoInitialize(NULL)))
+    {
+      result = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(imageFactory.expose()));
+    }
+    if (result != S_OK)
     {
       LogImageWarning(caller, "Was unable to obtain image factory interface.");
       return false;
