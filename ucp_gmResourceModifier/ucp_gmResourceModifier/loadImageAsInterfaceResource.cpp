@@ -180,11 +180,14 @@ static std::vector<Pixel> GetFrameData(const char* caller, IUnknownWrapper<IWICB
 
 
 // Decodes a TGX image into colour words and an opacity mask. Returns false on malformed data.
-// Every row ends with a newline; one data byte describes at most 32 pixels.
+// Every row ends with a newline; one data byte describes at most 32 pixels. The colour words
+// keep the byte budget of GetFrameData.
 static bool DecodeTGX(const unsigned char* data, int dataSize, size_t width, size_t height,
   std::vector<unsigned short>& rawPixel, std::vector<bool>& opaque)
 {
-  if (!width || !height || dataSize <= 0 || static_cast<unsigned long long>(width) * height > static_cast<unsigned long long>(dataSize) * 32)
+  const unsigned long long pixels{ static_cast<unsigned long long>(width) * height };
+  if (!width || !height || dataSize <= 0 || pixels > static_cast<unsigned long long>(dataSize) * 32 ||
+      pixels * sizeof(unsigned short) > UINT_MAX)
   {
     return false;
   }
