@@ -10,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdint>
+#include <string>
 #include <stdexcept>
 
 
@@ -28,14 +29,22 @@ static BOOL shcOffsetModifierFlag{};
 static constexpr int MAX_GM_SHEETS{ 240 };
 static constexpr int MAX_IMAGES{ 66000 };
 
-// Native IDs are available only after the loader admits the complete batch.
+// Native IDs are available only after the loader admits the sheets.
 struct SheetReservation
 {
   int baseGm;
   Gm1Resource* resource;
   int slot{ -1 };
+  bool inherits{ false }; // same count as baseGm: the slot's originals are baseGm's pictures
 };
 static std::vector<SheetReservation> sheetReservations{};
+
+static void SkipReservation(const SheetReservation& reservation, const char* reason)
+{
+  const std::string message{ "[gmResourceModifier]: Reserved sheet based on gm " +
+    std::to_string(reservation.baseGm) + " skipped: " + reason };
+  Log(LOG_WARNING, message.c_str());
+}
 
 static bool AdmitReservedSheets(ColorAdapter* renderer)
 {
@@ -45,8 +54,7 @@ static bool AdmitReservedSheets(ColorAdapter* renderer)
   // Verified renderer fields.
   auto& nextImage = *reinterpret_cast<int*>(reinterpret_cast<char*>(renderer) + 0x48);
   auto& nextGm = *reinterpret_cast<int*>(reinterpret_cast<char*>(renderer) + 0x4c);
-  if (nextGm < 1 || nextGm > MAX_GM_SHEETS || *shcGmCount != nextGm ||
-      sheetReservations.size() > static_cast<size_t>(MAX_GM_SHEETS - nextGm)) return false;
+  if (nextGm < 1 || nextGm > MAX_GM_SHEETS || *shcGmCount != nextGm) return false;
   if (nextImage < 1 || nextImage > MAX_IMAGES) return false;
 
   size_t images{ 1 };
@@ -59,28 +67,48 @@ static bool AdmitReservedSheets(ColorAdapter* renderer)
   }
   if (images != static_cast<size_t>(nextImage)) return false;
 
-  for (const auto& reservation : sheetReservations)
-  {
-    if (reservation.baseGm >= nextGm) return false;
-    const auto& base = shcHeaderStart[reservation.baseGm];
-    const auto& custom = *reservation.resource->gm1Header;
-    const size_t count = base.numberOfPicturesInFile;
-    if (!count || count != custom.numberOfPicturesInFile || base.gm1Type != custom.gm1Type ||
-        count > MAX_IMAGES - images) return false;
-    images += count;
-  }
-
-  // All layout/capacity checks precede the first native write. Replacers snapshot
-  // these inherited originals and retain SetGm's reset/free semantics.
+  // The game's tables are consistent; each reservation is checked before its own writes.
+  // A slot with its own count starts with the resource's header; its pictures are
+  // installed once the resource is ready.
   for (auto& reservation : sheetReservations)
   {
+    if (reservation.baseGm >= nextGm || !shcHeaderStart[reservation.baseGm].numberOfPicturesInFile)
+    {
+      SkipReservation(reservation, "base gm not loaded");
+      continue;
+    }
     const auto& base = shcHeaderStart[reservation.baseGm];
-    const size_t count = base.numberOfPicturesInFile;
-    const int source = shcFirstImageStart[reservation.baseGm];
-    shcHeaderStart[nextGm] = base;
-    std::memcpy(&shcImageHeaderStart[nextImage], &shcImageHeaderStart[source], count * sizeof(ImageHeader));
-    std::memcpy(&shcSizesStart[nextImage], &shcSizesStart[source], count * sizeof(int));
-    std::memcpy(&shcOffsetStart[nextImage], &shcOffsetStart[source], count * sizeof(int));
+    const auto& custom = *reservation.resource->gm1Header;
+    const size_t count = custom.numberOfPicturesInFile;
+    if (base.gm1Type != custom.gm1Type)
+    {
+      SkipReservation(reservation, "picture type differs from the base gm");
+      continue;
+    }
+    if (nextGm >= MAX_GM_SHEETS)
+    {
+      SkipReservation(reservation, "no free gm slot");
+      continue;
+    }
+    if (count > static_cast<size_t>(MAX_IMAGES - nextImage))
+    {
+      SkipReservation(reservation, "image table full");
+      continue;
+    }
+
+    reservation.inherits = count == base.numberOfPicturesInFile;
+    if (reservation.inherits)
+    {
+      const int source = shcFirstImageStart[reservation.baseGm];
+      shcHeaderStart[nextGm] = base;
+      std::memcpy(&shcImageHeaderStart[nextImage], &shcImageHeaderStart[source], count * sizeof(ImageHeader));
+      std::memcpy(&shcSizesStart[nextImage], &shcSizesStart[source], count * sizeof(int));
+      std::memcpy(&shcOffsetStart[nextImage], &shcOffsetStart[source], count * sizeof(int));
+    }
+    else
+    {
+      shcHeaderStart[nextGm] = custom;
+    }
     shcFirstImageStart[nextGm] = nextImage;
     reservation.slot = nextGm++;
     nextImage += static_cast<int>(count);
@@ -111,8 +139,7 @@ void __thiscall ColorAdapter::detouredLoadGmFiles(char* fileNameArray)
   // needed to adjust image offset and sizes (although, the whole data is still kept in memory) (currently from SHC 1.41)
   shcOffsetModifierFlag = *(BOOL*)(((unsigned char*)shcTransformStruct) + 80);
 
-  const bool reservationsAdmitted = AdmitReservedSheets(this);
-  if (!reservationsAdmitted)
+  if (!AdmitReservedSheets(this))
     Log(LOG_WARNING, "[gmResourceModifier]: Additional GM sheets could not be admitted; no reserved layout was installed.");
 
   initDone = true;  // needed here to ready resources
@@ -130,19 +157,27 @@ void __thiscall ColorAdapter::detouredLoadGmFiles(char* fileNameArray)
 
   Gm1ResourceManager::ReadyAllResources();
 
+  for (auto& reservation : sheetReservations)
+  {
+    Gm1Resource& resource{ *reservation.resource };
+    reservation.resource = nullptr;
+    if (reservation.slot >= 0 && !reservation.inherits)
+    {
+      // Installed before the slot's first snapshot, so the resource's pictures are the
+      // slot's originals; the reservation pin keeps them loaded.
+      replacerVector[reservation.slot].copyToShc(resource, -1, -1);
+      continue;
+    }
+    if (reservation.slot >= 0 && !SetGm(reservation.slot, -1, resource.resourceId, -1))
+      reservation.slot = -1;
+    --resource.refCounter; // release the pending reservation pin
+  }
+
   for (const auto& [gmId, imageInGm, resourceId, imageInResource] : preRequests)
   {
     SetGm(gmId, imageInGm, resourceId, imageInResource); // need to call replace in order of definition
   }
   preRequests.clear();
-
-  for (auto& reservation : sheetReservations)
-  {
-    if (reservationsAdmitted && !SetGm(reservation.slot, -1, reservation.resource->resourceId, -1))
-      reservation.slot = -1;
-    --reservation.resource->refCounter; // release the pending reservation pin
-    reservation.resource = nullptr;
-  }
 }
 
 

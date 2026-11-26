@@ -70,8 +70,10 @@ The provided functions are the following:
   The supported formats depend on the OS. 
 
 * `int ReserveGm(int baseGm, int resourceId)`  
-  Call before the game loads its gm files. Reserves a new sheet that inherits `baseGm`
-  and shows the resource, which must match the base sheet's type and image count.
+  Call before the game loads its gm files. Reserves a new sheet that shows the resource,
+  which must have the type of `baseGm` and can have any image count.
+  With the image count of `baseGm`, a reset shows the pictures of `baseGm`; otherwise
+  the resource's pictures are the sheet's originals and the resource stays loaded.
   Returns a reservation token (not a gm id) or `-1`.
 
 * `int GetReservedGm(int token)`  
