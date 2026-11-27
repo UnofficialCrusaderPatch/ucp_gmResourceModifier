@@ -105,6 +105,15 @@ The Lua exports are parameters and functions accessible through the module objec
 * `int LoadResourceFromImage(string filepath)`  
   Identical to C++ version.
 
+* `int, int LoadGm1ResourceFromData(string data)`
+  Loads GM1 bytes and returns the resource ID and picture count, or -1 on failure.
+
+* `int LoadResourceFromImageData(string data)`
+  Loads image bytes and returns the resource ID, or -1 on failure.
+
+* `string, int, int EncodeImageAsTgx(string data)`
+  Returns the first image frame as a TGX file (bytes, width, height), or nil on failure.
+
 * `int ReserveGm(int baseGm, int resourceId)`, `int GetReservedGm(int token)`  
   Identical to C++ version.
 

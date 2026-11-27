@@ -56,7 +56,7 @@ static void LogImageWarning(const char* caller, const char* message)
 // sources:
 // https://docs.microsoft.com/en-us/windows/win32/wic/-wic-api
 // https://docs.microsoft.com/de-de/windows/win32/wic/-wic-creating-decoder
-static bool OpenImageDecoder(const char* caller, const char* filepath, IUnknownWrapper<IWICBitmapDecoder>& decoderInterface)
+static bool InitializeImageFactory(const char* caller)
 {
   if (!imageFactory)
   {
@@ -72,7 +72,12 @@ static bool OpenImageDecoder(const char* caller, const char* filepath, IUnknownW
       return false;
     }
   }
+  return true;
+}
 
+static bool OpenImageDecoder(const char* caller, const char* filepath, IUnknownWrapper<IWICBitmapDecoder>& decoderInterface)
+{
+  if (!InitializeImageFactory(caller)) return false;
   std::vector<WCHAR> filepathWideStr{ GetWideCharFilepathFromUTF8(filepath) };
   if (filepathWideStr.empty())
   {
@@ -94,6 +99,19 @@ static bool OpenImageDecoder(const char* caller, const char* filepath, IUnknownW
   return true;
 }
 
+static bool OpenImageDecoder(const char* caller, const char* data, size_t size,
+  IUnknownWrapper<IWICStream>& stream, IUnknownWrapper<IWICBitmapDecoder>& decoder)
+{
+  if (!InitializeImageFactory(caller)) return false;
+  if (size == 0 || size > MAXDWORD || FAILED(imageFactory->CreateStream(stream.expose())) ||
+      FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(const_cast<char*>(data)), static_cast<DWORD>(size))) ||
+      FAILED(imageFactory->CreateDecoderFromStream(stream.get(), nullptr, WICDecodeMetadataCacheOnDemand, decoder.expose())))
+  {
+    LogImageWarning(caller, "Was unable to decode the image data.");
+    return false;
+  }
+  return true;
+}
 
 // A rectangle in resized image coordinates; it may extend beyond the image.
 struct ClipArea
@@ -381,10 +399,28 @@ static std::vector<unsigned char> TransformToTGX(const std::vector<unsigned shor
 
 
 
-int Gm1ResourceManager::CreateGm1ResourceFromImage(const char* filepath)
+static std::vector<unsigned char> EncodeFirstFrame(const char* caller,
+  IUnknownWrapper<IWICBitmapDecoder>& decoder, WICRect& rect)
 {
+  const auto pixels = GetFrameData<unsigned short>(caller, decoder, 0,
+    GUID_WICPixelFormat16bppBGRA5551, 1.0f, { 0, 0, MAX_IMAGE_SIDE, MAX_IMAGE_SIDE }, rect);
+  if (pixels.empty()) return {};
+  std::vector<bool> opaque(pixels.size());
+  for (size_t index = 0; index < pixels.size(); ++index)
+  {
+    opaque[index] = (pixels[index] & 0x8000) != 0;
+  }
+  return TransformToTGX(pixels, opaque, rect.Width, rect.Height);
+}
+
+int Gm1ResourceManager::CreateGm1ResourceFromImage(const char* source, size_t size)
+{
+  constexpr auto caller = "LoadResourceFromImage";
+  IUnknownWrapper<IWICStream> stream;
   IUnknownWrapper<IWICBitmapDecoder> decoderInterface;
-  if (!OpenImageDecoder("LoadResourceFromImage", filepath, decoderInterface))
+  const bool opened = size == 0 ? OpenImageDecoder(caller, source, decoderInterface)
+    : OpenImageDecoder(caller, source, size, stream, decoderInterface);
+  if (!opened)
   {
     return -1;
   }
@@ -404,22 +440,7 @@ int Gm1ResourceManager::CreateGm1ResourceFromImage(const char* filepath)
   for (size_t i{ 0 }; i < frameCount; ++i)
   {
     WICRect rect{};
-    std::vector<unsigned short> rawPixel{ GetFrameData<unsigned short>("LoadResourceFromImage", decoderInterface, 0,
-      GUID_WICPixelFormat16bppBGRA5551, 1.0f, { 0, 0, MAX_IMAGE_SIDE, MAX_IMAGE_SIDE }, rect) };
-    if (rawPixel.empty())
-    {
-      return -1;
-    }
-    const size_t width{ static_cast<size_t>(rect.Width) };
-    const size_t height{ static_cast<size_t>(rect.Height) };
-
-    std::vector<bool> opaque(rawPixel.size());
-    for (size_t p{ 0 }; p < rawPixel.size(); ++p)
-    {
-      opaque[p] = (rawPixel[p] & 0x8000) != 0;
-    }
-
-    resourcesDataVectors.push_back(TransformToTGX(rawPixel, opaque, width, height));
+    resourcesDataVectors.push_back(EncodeFirstFrame(caller, decoderInterface, rect));
     if (resourcesDataVectors.back().empty())
     {
       return -1;
@@ -430,8 +451,8 @@ int Gm1ResourceManager::CreateGm1ResourceFromImage(const char* filepath)
     ImageHeader& header{ resourceImageHeaders.emplace_back() };
 
     // for now only set dimensions?
-    header.width = static_cast<unsigned short>(width);
-    header.height = static_cast<unsigned short>(height);
+    header.width = static_cast<unsigned short>(rect.Width);
+    header.height = static_cast<unsigned short>(rect.Height);
   }
 
   Gm1Resource resource{};
@@ -466,7 +487,37 @@ int Gm1ResourceManager::CreateGm1ResourceFromImage(const char* filepath)
   resource.imageSizes.swap(resourceSizes);
   resource.imageOffset.swap(resourceOffsets);
 
-  return AddResource(std::move(resource), filepath, true);
+  return AddResource(std::move(resource), size == 0 ? source : "image data", true);
+}
+
+int lua_LoadResourceFromImageData(lua_State* L)
+{
+  size_t size;
+  const char* data = luaL_checklstring(L, 1, &size);
+  lua_pushinteger(L, size == 0 ? -1 : Gm1ResourceManager::CreateGm1ResourceFromImage(data, size));
+  return 1;
+}
+
+int lua_EncodeImageAsTgx(lua_State* L)
+{
+  size_t size;
+  const char* data = luaL_checklstring(L, 1, &size);
+  IUnknownWrapper<IWICStream> stream;
+  IUnknownWrapper<IWICBitmapDecoder> decoder;
+  constexpr auto caller = "EncodeImageAsTgx";
+  if (!OpenImageDecoder(caller, data, size, stream, decoder)) return 0;
+
+  WICRect rect{};
+  const auto pixels = EncodeFirstFrame(caller, decoder, rect);
+  if (pixels.empty()) return 0;
+
+  const uint32_t header[] = { static_cast<uint32_t>(rect.Width), static_cast<uint32_t>(rect.Height) };
+  lua_pushlstring(L, reinterpret_cast<const char*>(header), sizeof(header));
+  lua_pushlstring(L, reinterpret_cast<const char*>(pixels.data()), pixels.size());
+  lua_concat(L, 2);
+  lua_pushinteger(L, rect.Width);
+  lua_pushinteger(L, rect.Height);
+  return 3;
 }
 
 

@@ -285,6 +285,12 @@ void Gm1ResourceManager::LogHelper(const LogLevel level, const char* start, cons
 
 int Gm1ResourceManager::CreateGm1Resource(const char* filename)
 {
+  std::ifstream input{ filename, std::ios::binary };
+  return CreateGm1Resource(input, filename);
+}
+
+int Gm1ResourceManager::CreateGm1Resource(std::istream& ifs, const char* filename)
+{
   // create temp
   std::unique_ptr<Gm1Header> gm1HeaderTemp;
   std::vector<int> imageOffsetTemp{};
@@ -292,13 +298,9 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
   std::vector<ImageHeader> imageHeaderTemp{};
   std::vector<unsigned char> imageDataTemp{};
 
-  // source: https://stackoverflow.com/a/17338119
-  std::ifstream ifs;
-  //prepare ifs to throw if failbit gets set
-  ifs.exceptions(std::ios::failbit | std::ios::badbit);
   try
   {
-    ifs.open(filename, std::ios::binary);
+    ifs.exceptions(std::ios::failbit | std::ios::badbit);
 
     ifs.seekg(0, std::ios::end);
     const auto fileLength = ifs.tellg();
@@ -338,7 +340,6 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
     imageDataTemp.resize(gm1HeaderTemp->dataSize);
     ifs.read((char*) imageDataTemp.data(), gm1HeaderTemp->dataSize);
 
-    ifs.close();  // closing manually to trigger error here and not later
   }
   catch (const std::exception& e)
   {
@@ -789,6 +790,19 @@ extern "C" __declspec(dllexport) int __cdecl lua_LoadGm1Resource(lua_State * L)
   int res{ Gm1ResourceManager::CreateGm1Resource(lua_tostring(L, 1)) };
   lua_pushinteger(L, res);
   return 1;
+}
+
+int lua_LoadGm1ResourceFromData(lua_State* L)
+{
+  size_t size;
+  const char* data = luaL_checklstring(L, 1, &size);
+  std::istringstream input{ std::string(data, size), std::ios::binary };
+  const int id = Gm1ResourceManager::CreateGm1Resource(input, "GM1 data");
+  const auto* resource = Gm1ResourceManager::GetResource(id);
+  lua_pushinteger(L, id);
+  if (!resource) return 1;
+  lua_pushinteger(L, resource->gm1Header->numberOfPicturesInFile);
+  return 2;
 }
 
 

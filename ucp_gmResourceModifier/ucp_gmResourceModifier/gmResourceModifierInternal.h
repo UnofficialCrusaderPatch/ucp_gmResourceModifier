@@ -95,7 +95,8 @@ private:
 public:
 
   static int CreateGm1Resource(const char* filename);
-  static int CreateGm1ResourceFromImage(const char* filepath);
+  static int CreateGm1Resource(std::istream& input, const char* name);
+  static int CreateGm1ResourceFromImage(const char* source, size_t size = 0);
   static int CreateOverlayResource(int gmID, int imageInGm, const char* filepath, int x, int y, float scale);
   static bool FreeGm1Resource(int resourceId);
 
@@ -214,4 +215,7 @@ extern "C" __declspec(dllexport) int __cdecl lua_ReserveGm(lua_State * L);
 extern "C" __declspec(dllexport) int __cdecl lua_GetReservedGm(lua_State * L);
 
 extern "C" __declspec(dllexport) int __cdecl lua_LoadResourceFromImage(lua_State * L);
+int lua_LoadResourceFromImageData(lua_State* L);
+int lua_LoadGm1ResourceFromData(lua_State* L);
+int lua_EncodeImageAsTgx(lua_State* L);
 extern "C" __declspec(dllexport) int __cdecl lua_CreateOverlayResource(lua_State * L);
