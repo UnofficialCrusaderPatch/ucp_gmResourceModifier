@@ -798,11 +798,14 @@ int lua_LoadGm1ResourceFromData(lua_State* L)
   const char* data = luaL_checklstring(L, 1, &size);
   std::istringstream input{ std::string(data, size), std::ios::binary };
   const int id = Gm1ResourceManager::CreateGm1Resource(input, "GM1 data");
+  if (id < 0) return 0;
   const auto* resource = Gm1ResourceManager::GetResource(id);
+  lua_createtable(L, 0, 2);
   lua_pushinteger(L, id);
-  if (!resource) return 1;
+  lua_setfield(L, -2, "id");
   lua_pushinteger(L, resource->gm1Header->numberOfPicturesInFile);
-  return 2;
+  lua_setfield(L, -2, "pictures");
+  return 1;
 }
 
 

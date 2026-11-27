@@ -508,16 +508,20 @@ int lua_EncodeImageAsTgx(lua_State* L)
   if (!OpenImageDecoder(caller, data, size, stream, decoder)) return 0;
 
   WICRect rect{};
-  const auto pixels = EncodeFirstFrame(caller, decoder, rect);
-  if (pixels.empty()) return 0;
+  const auto tgx = EncodeFirstFrame(caller, decoder, rect);
+  if (tgx.empty()) return 0;
 
+  lua_createtable(L, 0, 3);
   const uint32_t header[] = { static_cast<uint32_t>(rect.Width), static_cast<uint32_t>(rect.Height) };
   lua_pushlstring(L, reinterpret_cast<const char*>(header), sizeof(header));
-  lua_pushlstring(L, reinterpret_cast<const char*>(pixels.data()), pixels.size());
+  lua_pushlstring(L, reinterpret_cast<const char*>(tgx.data()), tgx.size());
   lua_concat(L, 2);
+  lua_setfield(L, -2, "bytes");
   lua_pushinteger(L, rect.Width);
+  lua_setfield(L, -2, "width");
   lua_pushinteger(L, rect.Height);
-  return 3;
+  lua_setfield(L, -2, "height");
+  return 1;
 }
 
 
