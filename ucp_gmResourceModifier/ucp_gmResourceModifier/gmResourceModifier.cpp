@@ -10,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdint>
+#include <string>
 #include <stdexcept>
 
 
@@ -28,14 +29,22 @@ static BOOL shcOffsetModifierFlag{};
 static constexpr int MAX_GM_SHEETS{ 240 };
 static constexpr int MAX_IMAGES{ 66000 };
 
-// Native IDs are available only after the loader admits the complete batch.
+// Native IDs are available only after the loader admits the sheets.
 struct SheetReservation
 {
   int baseGm;
   Gm1Resource* resource;
   int slot{ -1 };
+  bool inherits{ false }; // same count as baseGm: the slot's originals are baseGm's pictures
 };
 static std::vector<SheetReservation> sheetReservations{};
+
+static void SkipReservation(const SheetReservation& reservation, const char* reason)
+{
+  const std::string message{ "[gmResourceModifier]: Reserved sheet based on gm " +
+    std::to_string(reservation.baseGm) + " skipped: " + reason };
+  Log(LOG_WARNING, message.c_str());
+}
 
 static bool AdmitReservedSheets(ColorAdapter* renderer)
 {
@@ -45,8 +54,7 @@ static bool AdmitReservedSheets(ColorAdapter* renderer)
   // Verified renderer fields.
   auto& nextImage = *reinterpret_cast<int*>(reinterpret_cast<char*>(renderer) + 0x48);
   auto& nextGm = *reinterpret_cast<int*>(reinterpret_cast<char*>(renderer) + 0x4c);
-  if (nextGm < 1 || nextGm > MAX_GM_SHEETS || *shcGmCount != nextGm ||
-      sheetReservations.size() > static_cast<size_t>(MAX_GM_SHEETS - nextGm)) return false;
+  if (nextGm < 1 || nextGm > MAX_GM_SHEETS || *shcGmCount != nextGm) return false;
   if (nextImage < 1 || nextImage > MAX_IMAGES) return false;
 
   size_t images{ 1 };
@@ -59,28 +67,49 @@ static bool AdmitReservedSheets(ColorAdapter* renderer)
   }
   if (images != static_cast<size_t>(nextImage)) return false;
 
-  for (const auto& reservation : sheetReservations)
-  {
-    if (reservation.baseGm >= nextGm) return false;
-    const auto& base = shcHeaderStart[reservation.baseGm];
-    const auto& custom = *reservation.resource->gm1Header;
-    const size_t count = base.numberOfPicturesInFile;
-    if (!count || count != custom.numberOfPicturesInFile || base.gm1Type != custom.gm1Type ||
-        count > MAX_IMAGES - images) return false;
-    images += count;
-  }
-
-  // All layout/capacity checks precede the first native write. Replacers snapshot
-  // these inherited originals and retain SetGm's reset/free semantics.
+  // The game's tables are consistent; each reservation is checked before its own writes.
+  // A slot with its own count starts with the resource's header; its pictures are
+  // installed once the resource is ready. A base is one of the game's own sheets.
+  const int gameSheets{ nextGm };
   for (auto& reservation : sheetReservations)
   {
+    if (reservation.baseGm >= gameSheets || !shcHeaderStart[reservation.baseGm].numberOfPicturesInFile)
+    {
+      SkipReservation(reservation, "base gm not loaded");
+      continue;
+    }
     const auto& base = shcHeaderStart[reservation.baseGm];
-    const size_t count = base.numberOfPicturesInFile;
-    const int source = shcFirstImageStart[reservation.baseGm];
-    shcHeaderStart[nextGm] = base;
-    std::memcpy(&shcImageHeaderStart[nextImage], &shcImageHeaderStart[source], count * sizeof(ImageHeader));
-    std::memcpy(&shcSizesStart[nextImage], &shcSizesStart[source], count * sizeof(int));
-    std::memcpy(&shcOffsetStart[nextImage], &shcOffsetStart[source], count * sizeof(int));
+    const auto& custom = *reservation.resource->gm1Header;
+    const size_t count = custom.numberOfPicturesInFile;
+    if (base.gm1Type != custom.gm1Type)
+    {
+      SkipReservation(reservation, "picture type differs from the base gm");
+      continue;
+    }
+    if (nextGm >= MAX_GM_SHEETS)
+    {
+      SkipReservation(reservation, "no free gm slot");
+      continue;
+    }
+    if (count > static_cast<size_t>(MAX_IMAGES - nextImage))
+    {
+      SkipReservation(reservation, "image table full");
+      continue;
+    }
+
+    reservation.inherits = count == base.numberOfPicturesInFile;
+    if (reservation.inherits)
+    {
+      const int source = shcFirstImageStart[reservation.baseGm];
+      shcHeaderStart[nextGm] = base;
+      std::memcpy(&shcImageHeaderStart[nextImage], &shcImageHeaderStart[source], count * sizeof(ImageHeader));
+      std::memcpy(&shcSizesStart[nextImage], &shcSizesStart[source], count * sizeof(int));
+      std::memcpy(&shcOffsetStart[nextImage], &shcOffsetStart[source], count * sizeof(int));
+    }
+    else
+    {
+      shcHeaderStart[nextGm] = custom;
+    }
     shcFirstImageStart[nextGm] = nextImage;
     reservation.slot = nextGm++;
     nextImage += static_cast<int>(count);
@@ -111,8 +140,7 @@ void __thiscall ColorAdapter::detouredLoadGmFiles(char* fileNameArray)
   // needed to adjust image offset and sizes (although, the whole data is still kept in memory) (currently from SHC 1.41)
   shcOffsetModifierFlag = *(BOOL*)(((unsigned char*)shcTransformStruct) + 80);
 
-  const bool reservationsAdmitted = AdmitReservedSheets(this);
-  if (!reservationsAdmitted)
+  if (!AdmitReservedSheets(this))
     Log(LOG_WARNING, "[gmResourceModifier]: Additional GM sheets could not be admitted; no reserved layout was installed.");
 
   initDone = true;  // needed here to ready resources
@@ -130,19 +158,27 @@ void __thiscall ColorAdapter::detouredLoadGmFiles(char* fileNameArray)
 
   Gm1ResourceManager::ReadyAllResources();
 
+  for (auto& reservation : sheetReservations)
+  {
+    Gm1Resource& resource{ *reservation.resource };
+    reservation.resource = nullptr;
+    if (reservation.slot >= 0 && !reservation.inherits)
+    {
+      // Installed before the slot's first snapshot, so the resource's pictures are the
+      // slot's originals; the reservation pin keeps them loaded.
+      replacerVector[reservation.slot].copyToShc(resource, -1, -1);
+      continue;
+    }
+    if (reservation.slot >= 0 && !SetGm(reservation.slot, -1, resource.resourceId, -1))
+      reservation.slot = -1;
+    --resource.refCounter; // release the pending reservation pin
+  }
+
   for (const auto& [gmId, imageInGm, resourceId, imageInResource] : preRequests)
   {
     SetGm(gmId, imageInGm, resourceId, imageInResource); // need to call replace in order of definition
   }
   preRequests.clear();
-
-  for (auto& reservation : sheetReservations)
-  {
-    if (reservationsAdmitted && !SetGm(reservation.slot, -1, reservation.resource->resourceId, -1))
-      reservation.slot = -1;
-    --reservation.resource->refCounter; // release the pending reservation pin
-    reservation.resource = nullptr;
-  }
 }
 
 
@@ -249,14 +285,12 @@ void Gm1ResourceManager::LogHelper(const LogLevel level, const char* start, cons
 
 int Gm1ResourceManager::CreateGm1Resource(const char* filename)
 {
-  
-  int newId{ GetId() };
-  if (newId < 0)
-  {
-    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "All ids used.");
-    return -1;
-  }
+  std::ifstream input{ filename, std::ios::binary };
+  return CreateGm1Resource(input, filename);
+}
 
+int Gm1ResourceManager::CreateGm1Resource(std::istream& ifs, const char* filename)
+{
   // create temp
   std::unique_ptr<Gm1Header> gm1HeaderTemp;
   std::vector<int> imageOffsetTemp{};
@@ -264,13 +298,9 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
   std::vector<ImageHeader> imageHeaderTemp{};
   std::vector<unsigned char> imageDataTemp{};
 
-  // source: https://stackoverflow.com/a/17338119
-  std::ifstream ifs;
-  //prepare ifs to throw if failbit gets set
-  ifs.exceptions(std::ios::failbit | std::ios::badbit);
   try
   {
-    ifs.open(filename, std::ios::binary);
+    ifs.exceptions(std::ios::failbit | std::ios::badbit);
 
     ifs.seekg(0, std::ios::end);
     const auto fileLength = ifs.tellg();
@@ -310,31 +340,41 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
     imageDataTemp.resize(gm1HeaderTemp->dataSize);
     ifs.read((char*) imageDataTemp.data(), gm1HeaderTemp->dataSize);
 
-    ifs.close();  // closing manually to trigger error here and not later
   }
   catch (const std::exception& e)
   {
     LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, e.what());
-    ReturnId(newId);
     return -1;
   }
 
-  auto [it, success]{ resources.try_emplace(newId) };
+  Gm1Resource resource{};
+  resource.gm1Header.swap(gm1HeaderTemp);
+  resource.imageHeader.swap(imageHeaderTemp);
+  resource.imageSizes.swap(imageSizesTemp);
+  resource.imageOffset.swap(imageOffsetTemp);
+  resource.imageData.swap(imageDataTemp);
+  return AddResource(std::move(resource), filename, true);
+}
+
+int Gm1ResourceManager::AddResource(Gm1Resource&& newResource, const char* filename, bool adaptColors)
+{
+  int newId{ GetId() };
+  if (newId < 0)
+  {
+    LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "All ids used.");
+    return -1;
+  }
+
+  auto [it, success]{ resources.try_emplace(newId, std::move(newResource)) };
   if (!success)
   {
     LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "Failed to place resource in map.");
     ReturnId(newId);
     return -1;
   }
-  
-  Gm1Resource& resource{ it->second };
-  resource.gm1Header.swap(gm1HeaderTemp);
-  resource.imageHeader.swap(imageHeaderTemp);
-  resource.imageSizes.swap(imageSizesTemp);
-  resource.imageOffset.swap(imageOffsetTemp);
-  resource.imageData.swap(imageDataTemp);
 
-  if (initDone && !Gm1ResourceManager::ReadyResource(resource))
+  Gm1Resource& resource{ it->second };
+  if (initDone && !Gm1ResourceManager::ReadyResource(resource, adaptColors))
   {
     LogHelper(LOG_WARNING, "[gmResourceModifier]: Error while loading resource ", filename, "Failed to ready resource.");
     ReturnId(newId);
@@ -346,7 +386,7 @@ int Gm1ResourceManager::CreateGm1Resource(const char* filename)
   return newId;
 }
 
-bool Gm1ResourceManager::ReadyResource(Gm1Resource& resource)
+bool Gm1ResourceManager::ReadyResource(Gm1Resource& resource, bool adaptColors)
 {
   if (!initDone)
   {
@@ -360,7 +400,10 @@ bool Gm1ResourceManager::ReadyResource(Gm1Resource& resource)
     return false;
   }
 
-  ColorAdapter::AdaptGm1Resource(resource); // needs relative to object offsets
+  if (adaptColors)
+  {
+    ColorAdapter::AdaptGm1Resource(resource); // needs relative to object offsets
+  }
 
   // adjust offsets to SHC memory
   for (size_t i{ 0 }; i < resource.gm1Header->numberOfPicturesInFile; ++i)
@@ -467,28 +510,45 @@ void Replacer::readyOrigResource()
     return; // already done
   }
 
-  origResource = std::make_unique<Gm1Resource>();
-  origResource->gm1Header = std::make_unique<Gm1Header>();
-  std::memcpy(origResource->gm1Header.get(), &shcHeaderStart[gmIndex], sizeof(Gm1Header));
+  // built completely before it is cached
+  auto resource{ std::make_unique<Gm1Resource>() };
+  resource->gm1Header = std::make_unique<Gm1Header>();
+  std::memcpy(resource->gm1Header.get(), &shcHeaderStart[gmIndex], sizeof(Gm1Header));
 
-  int numberOfPictures{ static_cast<int>(origResource->gm1Header->numberOfPicturesInFile) };
+  int numberOfPictures{ static_cast<int>(resource->gm1Header->numberOfPicturesInFile) };
 
-  if (numberOfPictures < 1)
+  if (numberOfPictures > 0)
   {
-    return; // we are done here, there is nothing in this index
+    resource->imageOffset.resize(numberOfPictures);
+    std::memcpy(resource->imageOffset.data(), &shcOffsetStart[firstImageIndex], numberOfPictures * sizeof(int));
+
+    resource->imageSizes.resize(numberOfPictures);
+    std::memcpy(resource->imageSizes.data(), &shcSizesStart[firstImageIndex], numberOfPictures * sizeof(int));
+
+    resource->imageHeader.resize(numberOfPictures);
+    std::memcpy(resource->imageHeader.data(), &shcImageHeaderStart[firstImageIndex], numberOfPictures * sizeof(ImageHeader));
+
+    resource->done = true;
   }
 
-  // copy data
-  origResource->imageOffset.resize(numberOfPictures);
-  std::memcpy(origResource->imageOffset.data(), &shcOffsetStart[firstImageIndex], numberOfPictures * sizeof(int));
+  origResource = std::move(resource);
+}
 
-  origResource->imageSizes.resize(numberOfPictures);
-  std::memcpy(origResource->imageSizes.data(), &shcSizesStart[firstImageIndex], numberOfPictures * sizeof(int));
 
-  origResource->imageHeader.resize(numberOfPictures);
-  std::memcpy(origResource->imageHeader.data(), &shcImageHeaderStart[firstImageIndex], numberOfPictures * sizeof(ImageHeader));
+const Gm1Resource* GetOriginalGm(int gmID)
+{
+  if (!initDone || gmID < 0 || gmID >= MAX_GM_SHEETS)
+  {
+    return nullptr;
+  }
+  Replacer& replacer{ replacerVector[gmID] };
+  replacer.readyOrigResource();
+  return replacer.origResource->done ? replacer.origResource.get() : nullptr;
+}
 
-  origResource->done = true;
+const unsigned char* GetGameImageData(int offset)
+{
+  return reinterpret_cast<const unsigned char*>(shcGmDataAddr) + offset;
 }
 
 
@@ -729,6 +789,22 @@ extern "C" __declspec(dllexport) int __cdecl lua_LoadGm1Resource(lua_State * L)
 
   int res{ Gm1ResourceManager::CreateGm1Resource(lua_tostring(L, 1)) };
   lua_pushinteger(L, res);
+  return 1;
+}
+
+int lua_LoadGm1ResourceFromData(lua_State* L)
+{
+  size_t size;
+  const char* data = luaL_checklstring(L, 1, &size);
+  std::istringstream input{ std::string(data, size), std::ios::binary };
+  const int id = Gm1ResourceManager::CreateGm1Resource(input, "GM1 data");
+  if (id < 0) return 0;
+  const auto* resource = Gm1ResourceManager::GetResource(id);
+  lua_createtable(L, 0, 2);
+  lua_pushinteger(L, id);
+  lua_setfield(L, -2, "id");
+  lua_pushinteger(L, resource->gm1Header->numberOfPicturesInFile);
+  lua_setfield(L, -2, "pictures");
   return 1;
 }
 

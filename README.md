@@ -70,13 +70,23 @@ The provided functions are the following:
   The supported formats depend on the OS. 
 
 * `int ReserveGm(int baseGm, int resourceId)`  
-  Call before the game loads its gm files. Reserves a new sheet that inherits `baseGm`
-  and shows the resource, which must match the base sheet's type and image count.
+  Call before the game loads its gm files. Reserves a new sheet that shows the resource,
+  which must have the type of `baseGm` and can have any image count.
+  With the image count of `baseGm`, a reset shows the pictures of `baseGm`; otherwise
+  the resource's pictures are the sheet's originals and the resource stays loaded.
   Returns a reservation token (not a gm id) or `-1`.
 
 * `int GetReservedGm(int token)`  
   Returns the gm id of the reserved sheet once the game has loaded its gm files,
   or `-1` before that or if the reservation failed.
+
+* `int CreateOverlayResource(int gmID, int imageInGm, const char* filepath, int x, int y, float scale)`
+
+  Call after the game has loaded its gm files. Creates a single picture resource from the
+  game's original picture `imageInGm` of the interface gm `gmID`, with the image file drawn over it.
+  The image is scaled by `scale` (above 0, at most 16) and placed with its top left corner at pixel `x`, `y`;
+  only the part over the original picture is used. Replacements do not affect the original.
+  Size and header stay those of the original picture. Returns the resource id or `-1`. Since 0.3.2. *initModuleFunctions()* does not require it; the pointer stays `nullptr` with an older module.
 
 
 ### Lua-Exports
@@ -95,7 +105,20 @@ The Lua exports are parameters and functions accessible through the module objec
 * `int LoadResourceFromImage(string filepath)`  
   Identical to C++ version.
 
+* `table LoadGm1ResourceFromData(string data)`
+  Loads GM1 bytes and returns `{ id, pictures }`, or nil on failure.
+
+* `int LoadResourceFromImageData(string data)`
+  Loads image bytes and returns the resource ID, or -1 on failure.
+
+* `table EncodeImageAsTgx(string data)`
+  Encodes the first image frame as TGX and returns `{ bytes, width, height }`, or nil on failure.
+
 * `int ReserveGm(int baseGm, int resourceId)`, `int GetReservedGm(int token)`  
+  Identical to C++ version.
+
+* `int CreateOverlayResource(int gmID, int imageInGm, string filepath, int x, int y, number scale = 1)`
+
   Identical to C++ version.
 
 ### Special Thanks

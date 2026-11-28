@@ -1,7 +1,9 @@
 name: gmResourceModifier
 display-name: Gm Resource Modifier
-version: 0.3.1
+version: 0.3.2
 author: TheRedDaemon
+dependencies:
+  framework: ">=3.0.8"
 meta:
   version: 1.0.0
 type: module
