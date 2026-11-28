@@ -1,9 +1,10 @@
 local exports = {}
 
 local function getAddress(aob, binding)
-  local address, reason = core.AOBScanUnique(aob)
-  if address == nil then
-    log(ERROR, string.format("GM Resource Modifier is off. The %s was %s.", binding, reason))
+  local ok, address = pcall(core.AOBScan, aob)
+  if not ok then
+    log(ERROR, string.format("GM Resource Modifier is off. The %s was not found.", binding))
+    return nil
   end
   return address
 end
